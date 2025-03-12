@@ -58,7 +58,7 @@ using namespace std::placeholders;
 
 static void print_version(FILE *stream, struct argp_state *state);
 void (*argp_program_version_hook)(FILE *, struct argp_state *) = print_version;
-const char *argp_program_bug_address = "5G-MAG Reference Tools <reference-tools@5g-mag.com>";
+const char *argp_program_bug_address = "5G-MAG Reference Tools CRITS<reference-tools@5g-mag.com>";
 static char doc[] = "5G-MAG-RT MBMS Modem Process";  // NOLINT
 
 static struct argp_option options[] = {  // NOLINT
