@@ -1,7 +1,7 @@
 [submodule "lib/srsran"]
 	path = lib/srsran
 	url = ../srsRAN_4G
-	branch = fembms
+	branch = crits_rubens
 [submodule "supporting_files/rt-common-shared"]
 	path = supporting_files/rt-common-shared
 	url = https://github.com/5G-MAG/rt-common-shared
