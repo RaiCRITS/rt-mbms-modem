@@ -155,7 +155,7 @@ static struct argp argp = {options, parse_opt, nullptr, doc,
  * Print the program version in MAJOR.MINOR.PATCH format.
  */
 void print_version(FILE *stream, struct argp_state * /*state*/) {
-  fprintf(stream, "%s.%s.%s\n", std::to_string(VERSION_MAJOR).c_str(),
+  fprintf(stream, "%s.%s.%s rubens \n", std::to_string(VERSION_MAJOR).c_str(),
           std::to_string(VERSION_MINOR).c_str(),
           std::to_string(VERSION_PATCH).c_str());
 }
