@@ -155,7 +155,7 @@ static struct argp argp = {options, parse_opt, nullptr, doc,
  * Print the program version in MAJOR.MINOR.PATCH format.
  */
 void print_version(FILE *stream, struct argp_state * /*state*/) {
-  fprintf(stream, "%s.%s.%s rubens \n", std::to_string(VERSION_MAJOR).c_str(),
+  fprintf(stream, "%s.%s.%s \n", std::to_string(VERSION_MAJOR).c_str(),
           std::to_string(VERSION_MINOR).c_str(),
           std::to_string(VERSION_PATCH).c_str());
 }
@@ -341,7 +341,7 @@ auto main(int argc, char **argv) -> int {
   Phy phy(
       cfg,
       std::bind(&SdrReader::get_samples, &sdr, _1, _2, _3),  // NOLINT
-      arguments.file_bw ? arguments.file_bw * 5 : 25,
+      arguments.file_bw ? arguments.file_bw * 5 : 25,  //ALC if non reading from file, assume 25 PRB (5MHz @ 15kHz)
       arguments.override_nof_prb,
       rx_channels);
 
@@ -368,21 +368,21 @@ auto main(int argc, char **argv) -> int {
   spdlog::info("Starting RESTful API handler at {}", uri);
   RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params);
 
-  // Initialize one CAS and thered_cnt MBSFN frame processors
+  // Initialize one CAS and thread_cnt MBSFN frame processors
   CasFrameProcessor cas_processor(cfg, phy, rlc, rest_handler, rx_channels);
   if (!cas_processor.init()) {
     spdlog::error("Failed to create CAS processor. Exiting.");
     exit(1);
   }
 
-  std::vector<MbsfnFrameProcessor*> mbsfn_processors;
+  std::vector<std::unique_ptr<MbsfnFrameProcessor>> mbsfn_processors;
   for (auto i = 0U; i < thread_cnt; i++) {
-    auto p = new MbsfnFrameProcessor(cfg, rlc, phy, mac_log, rest_handler, rx_channels);
+    auto p = std::make_unique<MbsfnFrameProcessor>(cfg, rlc, phy, mac_log, rest_handler, rx_channels);
     if (!p->init()) {
       spdlog::error("Failed to create MBSFN processor. Exiting.");
       exit(1);
     }
-    mbsfn_processors.push_back(p);
+    mbsfn_processors.push_back(std::move(p));
   }
 
   // Start receiving sample data
@@ -647,9 +647,6 @@ auto main(int argc, char **argv) -> int {
   }
 
   // Main loop ended by signal. Free the MBSFN processors, and bail.
-  for (auto i = 0U; i < thread_cnt; i++) {
-    delete( mbsfn_processors[i] );
-  }
   } catch (...) {
     exit(1);
   }
