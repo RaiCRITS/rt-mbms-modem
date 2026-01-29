@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5G-MAG RT MBMS Modem Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            color: #1e3c72;
+            font-size: 28px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .status-dot {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.searching {
+            background-color: #ff9800;
+        }
+
+        .status-dot.syncing {
+            background-color: #2196f3;
+        }
+
+        .status-dot.synchronized {
+            background-color: #4caf50;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .card h2 {
+            color: #1e3c72;
+            margin-bottom: 15px;
+            font-size: 18px;
+            border-bottom: 2px solid #2a5298;
+            padding-bottom: 10px;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .metric-value {
+            color: #2a5298;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-bottom: 20px;
+        }
+
+        .constellation-container {
+            position: relative;
+            height: 350px;
+        }
+
+        .sdr-controls {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #eee;
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+            display: grid;
+            grid-template-columns: 150px 1fr 80px;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            color: #555;
+        }
+
+        .control-group input {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .control-group input:focus {
+            outline: none;
+            border-color: #2a5298;
+            box-shadow: 0 0 5px rgba(42, 82, 152, 0.3);
+        }
+
+        button {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .log-container {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .error {
+            color: #d32f2f;
+            background: #ffebee;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .success {
+            color: #388e3c;
+            background: #e8f5e9;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .api-url-input {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .api-url-input input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .api-url-input button {
+            padding: 10px 20px;
+        }
+
+        @media (max-width: 1200px) {
+            .grid-3 {
+                grid-template-columns: 1fr;
+            }
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .refresh-rate {
+            font-size: 12px;
+            color: #999;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>5G-MAG RT MBMS Modem Dashboard</h1>
+            <div class="status-indicator">
+                <div class="status-dot searching" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </div>
+
+        <div class="api-url-input">
+            <label for="apiUrl">API URL:</label>
+            <input type="text" id="apiUrl" value="http://localhost:8080" placeholder="http://localhost:8080">
+            <button onclick="updateApiUrl()">Set</button>
+        </div>
+
+        <div id="errorMessage"></div>
+
+        <!-- Status and SDR Parameters -->
+        <div class="grid-2">
+            <div class="card">
+                <h2>Modem Status</h2>
+                <div class="metric">
+                    <span class="metric-label">State:</span>
+                    <span class="metric-value" id="state">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Cell ID:</span>
+                    <span class="metric-value" id="cellId">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Number of PRBs:</span>
+                    <span class="metric-value" id="nofPrb">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">CFO (Hz):</span>
+                    <span class="metric-value" id="cfo">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">CINR (dB):</span>
+                    <span class="metric-value" id="cinrDb">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Subcarrier Spacing:</span>
+                    <span class="metric-value" id="subcarrierSpacing">-</span>
+                </div>
+                <div class="refresh-rate">Updates every 1 second</div>
+            </div>
+
+            <div class="card">
+                <h2>SDR Parameters</h2>
+                <div class="metric">
+                    <span class="metric-label">Frequency (Hz):</span>
+                    <span class="metric-value" id="frequency">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Gain (dB):</span>
+                    <span class="metric-value" id="gain">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Gain Range:</span>
+                    <span class="metric-value" id="gainRange">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Sample Rate (Hz):</span>
+                    <span class="metric-value" id="sampleRate">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Filter BW (Hz):</span>
+                    <span class="metric-value" id="filterBw">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Antenna:</span>
+                    <span class="metric-value" id="antenna">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Buffer Level (%):</span>
+                    <span class="metric-value" id="bufferLevel">-</span>
+                </div>
+                <div class="sdr-controls">
+                    <h3 style="margin-bottom: 15px; color: #555;">Update Parameters</h3>
+                    <div class="control-group">
+                        <label for="newFrequency">Frequency (Hz):</label>
+                        <input type="number" id="newFrequency" placeholder="Leave empty to skip">
+                        <button onclick="updateSdrParams()">Update</button>
+                    </div>
+                    <div class="control-group">
+                        <label for="newGain">Gain (dB):</label>
+                        <input type="number" id="newGain" step="0.1" placeholder="Leave empty to skip">
+                        <button onclick="updateSdrParams()" style="visibility: hidden;"></button>
+                    </div>
+                    <div class="control-group">
+                        <label for="newAntenna">Antenna:</label>
+                        <input type="text" id="newAntenna" placeholder="Leave empty to skip">
+                        <button onclick="updateSdrParams()" style="visibility: hidden;"></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CINR Graph -->
+        <div class="card">
+            <h2>CINR Over Time</h2>
+            <div class="chart-container">
+                <canvas id="cinrChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Channel Status -->
+        <div class="grid-3">
+            <div class="card">
+                <h2>PDSCH Status</h2>
+                <div class="metric">
+                    <span class="metric-label">Present:</span>
+                    <span class="metric-value" id="pdschPresent">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">MCS:</span>
+                    <span class="metric-value" id="pdschMcs">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BER:</span>
+                    <span class="metric-value" id="pdschBer">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BLER:</span>
+                    <span class="metric-value" id="pdschBler">-</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>MCCH Status</h2>
+                <div class="metric">
+                    <span class="metric-label">Present:</span>
+                    <span class="metric-value" id="mcchPresent">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">MCS:</span>
+                    <span class="metric-value" id="mcchMcs">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BER:</span>
+                    <span class="metric-value" id="mcchBer">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BLER:</span>
+                    <span class="metric-value" id="mcchBler">-</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>MCH Status (0)</h2>
+                <div class="metric">
+                    <span class="metric-label">Present:</span>
+                    <span class="metric-value" id="mchPresent">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">MCS:</span>
+                    <span class="metric-value" id="mchMcs">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BER:</span>
+                    <span class="metric-value" id="mchBer">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">BLER:</span>
+                    <span class="metric-value" id="mchBler">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Constellation Diagrams -->
+        <div class="grid-3">
+            <div class="card">
+                <h2>PDSCH Constellation</h2>
+                <div class="constellation-container" id="pdschConstellation"></div>
+            </div>
+
+            <div class="card">
+                <h2>MCCH Constellation</h2>
+                <div class="constellation-container" id="mcchConstellation"></div>
+            </div>
+
+            <div class="card">
+                <h2>MCH Constellation</h2>
+                <div class="constellation-container" id="mchConstellation"></div>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="card">
+            <h2>System Logs</h2>
+            <div class="log-container" id="logContainer"></div>
+        </div>
+    </div>
+
+    <script>
+        let apiUrl = localStorage.getItem('apiUrl') || 'http://localhost:8080';
+        let cinrHistory = [];
+        let cinrChart = null;
+        const MAX_CINR_POINTS = 100;
+
+        // Initialize API URL input
+        document.getElementById('apiUrl').value = apiUrl;
+
+        function updateApiUrl() {
+            apiUrl = document.getElementById('apiUrl').value || 'http://localhost:8080';
+            localStorage.setItem('apiUrl', apiUrl);
+            clearError();
+        }
+
+        function clearError() {
+            document.getElementById('errorMessage').innerHTML = '';
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').innerHTML = 
+                `<div class="error">Error: ${message}</div>`;
+        }
+
+        function showSuccess(message) {
+            document.getElementById('errorMessage').innerHTML = 
+                `<div class="success">✓ ${message}</div>`;
+            setTimeout(() => clearError(), 3000);
+        }
+
+        async function fetchApi(endpoint) {
+            try {
+                const response = await fetch(`${apiUrl}/${endpoint}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                console.error(`Failed to fetch ${endpoint}:`, error);
+                return null;
+            }
+        }
+
+        async function fetchBinary(endpoint) {
+            try {
+                const response = await fetch(`${apiUrl}/${endpoint}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return await response.arrayBuffer();
+            } catch (error) {
+                console.error(`Failed to fetch ${endpoint}:`, error);
+                return null;
+            }
+        }
+
+        async function updateStatus() {
+            const status = await fetchApi('status');
+            if (!status) {
+                showError('Cannot connect to API');
+                updateStatusDot('searching');
+                return;
+            }
+
+            clearError();
+
+            // Update status display
+            const state = status.state || '-';
+            document.getElementById('state').textContent = state;
+            updateStatusDot(state);
+
+            document.getElementById('cellId').textContent = status.cell_id || '-';
+            document.getElementById('nofPrb').textContent = status.nof_prb || '-';
+            document.getElementById('cfo').textContent = (status.cfo || 0).toFixed(1);
+            document.getElementById('cinrDb').textContent = (status.cinr_db || 0).toFixed(2);
+            document.getElementById('subcarrierSpacing').textContent = 
+                (status.subcarrier_spacing || 0).toFixed(1) + ' kHz';
+
+            // Update CINR history
+            if (status.cinr_db !== undefined) {
+                cinrHistory.push(status.cinr_db);
+                if (cinrHistory.length > MAX_CINR_POINTS) {
+                    cinrHistory.shift();
+                }
+                updateCinrChart();
+            }
+        }
+
+        async function updateSdrParams() {
+            const sdrParams = await fetchApi('sdr_params');
+            if (!sdrParams) {
+                showError('Cannot fetch SDR parameters');
+                return;
+            }
+
+            document.getElementById('frequency').textContent = (sdrParams.frequency || 0).toLocaleString();
+            document.getElementById('gain').textContent = (sdrParams.gain || 0).toFixed(2);
+            document.getElementById('gainRange').textContent = 
+                `${(sdrParams.min_gain || 0).toFixed(2)} - ${(sdrParams.max_gain || 0).toFixed(2)}`;
+            document.getElementById('sampleRate').textContent = (sdrParams.sample_rate || 0).toLocaleString();
+            document.getElementById('filterBw').textContent = (sdrParams.filter_bw || 0).toLocaleString();
+            document.getElementById('antenna').textContent = sdrParams.antenna || '-';
+            document.getElementById('bufferLevel').textContent = 
+                ((sdrParams.buffer_level || 0) * 100).toFixed(1);
+        }
+
+        async function updateChannelStatus() {
+            // PDSCH
+            const pdschStatus = await fetchApi('pdsch_status');
+            if (pdschStatus) {
+                document.getElementById('pdschPresent').textContent = '✓';
+                document.getElementById('pdschMcs').textContent = pdschStatus.mcs || '-';
+                document.getElementById('pdschBer').textContent = (pdschStatus.ber || 0).toExponential(2);
+                document.getElementById('pdschBler').textContent = (pdschStatus.bler || 0).toFixed(4);
+            }
+
+            // MCCH
+            const mcchStatus = await fetchApi('mcch_status');
+            if (mcchStatus) {
+                document.getElementById('mcchPresent').textContent = '✓';
+                document.getElementById('mcchMcs').textContent = mcchStatus.mcs || '-';
+                document.getElementById('mcchBer').textContent = (mcchStatus.ber || 0).toExponential(2);
+                document.getElementById('mcchBler').textContent = (mcchStatus.bler || 0).toFixed(4);
+            }
+
+            // MCH
+            const mchStatus = await fetchApi('mch_status/0');
+            if (mchStatus) {
+                document.getElementById('mchPresent').textContent = mchStatus.present ? '✓' : '✗';
+                document.getElementById('mchMcs').textContent = mchStatus.mcs || '-';
+                document.getElementById('mchBer').textContent = (mchStatus.ber || 0).toExponential(2);
+                document.getElementById('mchBler').textContent = (mchStatus.bler || 0).toFixed(4);
+            }
+        }
+
+        async function updateConstellations() {
+            // Fetch constellation data
+            const pdschData = await fetchBinary('pdsch_data');
+            const mcchData = await fetchBinary('mcch_data');
+            const mchData = await fetchBinary('mch_data/0');
+
+            if (pdschData) {
+                const pdschPoints = parseConstellationData(pdschData);
+                plotConstellation('pdschConstellation', pdschPoints, 'PDSCH');
+            }
+
+            if (mcchData) {
+                const mcchPoints = parseConstellationData(mcchData);
+                plotConstellation('mcchConstellation', mcchPoints, 'MCCH');
+            }
+
+            if (mchData) {
+                const mchPoints = parseConstellationData(mchData);
+                plotConstellation('mchConstellation', mchPoints, 'MCH');
+            }
+        }
+
+        function parseConstellationData(arrayBuffer) {
+            // Convert binary data to constellation points
+            // Assuming: float32 I, float32 Q pairs
+            const view = new Float32Array(arrayBuffer);
+            const points = [];
+
+            for (let i = 0; i < view.length; i += 2) {
+                if (i + 1 < view.length) {
+                    points.push({
+                        I: view[i],
+                        Q: view[i + 1]
+                    });
+                }
+            }
+
+            return points;
+        }
+
+        function plotConstellation(elementId, points, title) {
+            if (points.length === 0) {
+                Plotly.newPlot(elementId, [], {
+                    title: `${title} - No Data`,
+                    xaxis: { title: 'I (In-phase)' },
+                    yaxis: { title: 'Q (Quadrature)' },
+                    margin: { l: 40, r: 20, t: 40, b: 40 }
+                }, { responsive: true });
+                return;
+            }
+
+            const iValues = points.map(p => p.I);
+            const qValues = points.map(p => p.Q);
+
+            const trace = {
+                x: iValues,
+                y: qValues,
+                mode: 'markers',
+                type: 'scatter',
+                marker: {
+                    size: 4,
+                    color: 'rgba(42, 82, 152, 0.6)',
+                    line: { color: 'rgba(42, 82, 152, 1)', width: 0.5 }
+                },
+                text: points.map((_, i) => `Sample ${i}`)
+            };
+
+            const layout = {
+                title: title,
+                xaxis: { 
+                    title: 'I (In-phase)',
+                    zeroline: true,
+                    showgrid: true
+                },
+                yaxis: { 
+                    title: 'Q (Quadrature)',
+                    zeroline: true,
+                    showgrid: true
+                },
+                margin: { l: 40, r: 20, t: 40, b: 40 },
+                plot_bgcolor: '#f9f9f9'
+            };
+
+            Plotly.newPlot(elementId, [trace], layout, { responsive: true });
+        }
+
+        function updateCinrChart() {
+            const ctx = document.getElementById('cinrChart');
+            if (!ctx) return;
+
+            if (!cinrChart) {
+                cinrChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: cinrHistory.map((_, i) => i),
+                        datasets: [{
+                            label: 'CINR (dB)',
+                            data: cinrHistory,
+                            borderColor: '#2a5298',
+                            backgroundColor: 'rgba(42, 82, 152, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 3,
+                            pointBackgroundColor: '#1e3c72',
+                            pointBorderColor: '#fff',
+                            pointBorderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                labels: { usePointStyle: true }
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: false,
+                                title: { display: true, text: 'CINR (dB)' }
+                            },
+                            x: {
+                                title: { display: true, text: 'Sample #' }
+                            }
+                        }
+                    }
+                });
+            } else {
+                cinrChart.data.labels = cinrHistory.map((_, i) => i);
+                cinrChart.data.datasets[0].data = cinrHistory;
+                cinrChart.update();
+            }
+        }
+
+        function updateStatusDot(state) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            dot.className = 'status-dot ' + state;
+            text.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+        }
+
+        async function updateSdrParamsControl() {
+            const frequency = document.getElementById('newFrequency').value;
+            const gain = document.getElementById('newGain').value;
+            const antenna = document.getElementById('newAntenna').value;
+
+            if (!frequency && !gain && !antenna) {
+                showError('Please enter at least one parameter to update');
+                return;
+            }
+
+            const payload = {};
+            if (frequency) payload.frequency = parseInt(frequency);
+            if (gain) payload.gain = parseFloat(gain);
+            if (antenna) payload.antenna = antenna;
+
+            try {
+                const response = await fetch(`${apiUrl}/sdr_params`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                showSuccess('SDR parameters updated successfully');
+                document.getElementById('newFrequency').value = '';
+                document.getElementById('newGain').value = '';
+                document.getElementById('newAntenna').value = '';
+
+                // Refresh display
+                await updateSdrParams();
+            } catch (error) {
+                showError(`Failed to update SDR parameters: ${error.message}`);
+            }
+        }
+
+        // Bind update function
+        window.updateSdrParams = updateSdrParamsControl;
+
+        async function loadLogs() {
+            const logData = await fetchBinary('log');
+            if (logData) {
+                const text = new TextDecoder().decode(logData);
+                const lines = text.split('\n').slice(-50); // Last 50 lines
+                document.getElementById('logContainer').innerHTML = 
+                    lines.map(line => `<div class="log-entry">${escapeHtml(line)}</div>`).join('');
+                
+                // Auto-scroll to bottom
+                const logContainer = document.getElementById('logContainer');
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+
+        // Main update loop
+        async function updateDashboard() {
+            await updateStatus();
+            await updateSdrParams();
+            await updateChannelStatus();
+            await updateConstellations();
+            await loadLogs();
+        }
+
+        // Initial update
+        updateDashboard();
+
+        // Refresh every second for status, every 2 seconds for everything else
+        setInterval(updateStatus, 1000);
+        setInterval(() => {
+            updateSdrParams();
+            updateChannelStatus();
+            updateConstellations();
+        }, 2000);
+        setInterval(loadLogs, 5000);
+    </script>
+</body>
+</html>
