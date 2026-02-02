@@ -52,7 +52,8 @@ public:
 	template <class Func, class... Args>
 	auto push(Func &&fn, Args &&...args)
 	{
-		using return_type = typename std::result_of<Func(Args...)>::type;
+		//using return_type = typename std::result_of<Func(Args...)>::type;
+		using return_type = std::invoke_result_t<Func, Args...>; // ALC  modified for C++17 version
 
 		auto task{ std::make_shared<std::packaged_task<return_type()>>(
 			std::bind(std::forward<Func>(fn), std::forward<Args>(args)...)

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project (modem VERSION 1.3.0)
+project (modem VERSION 1.3.1)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 find_package(cpprestsdk REQUIRED)
 include(CTest)
 include(FindPkgConfig)
+add_definitions(-Wno-error=deprecated-declarations)  
 
 file(MAKE_DIRECTORY ${PROJECT_BINARY_DIR}/lib/include)
 
