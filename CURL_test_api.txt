@@ -16,4 +16,4 @@ curl http://127.0.0.1:3010/modem-api/mch_status/0
 # Test updating SDR parameters (PUT)
 curl -X PUT http://127.0.0.1:3010/modem-api/sdr_params \
   -H "Content-Type: application/json" \
-  -d '{"frequency": 1452500000, "gain": 20.5, "antenna": 
+  -d '{"frequency": 1452500000, "gain": 20.5, "anten
