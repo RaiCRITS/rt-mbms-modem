@@ -323,6 +323,7 @@ auto main(int argc, char **argv) -> int {
     case 2: srs_level = srslog::basic_levels::warning; break;
     case 3: srs_level = srslog::basic_levels::error; break;
     case 4: srs_level = srslog::basic_levels::none; break;
+    default: break;
   }
 
   // Configure srsLTE logging
@@ -375,14 +376,14 @@ auto main(int argc, char **argv) -> int {
     exit(1);
   }
 
-  std::vector<std::unique_ptr<MbsfnFrameProcessor>> mbsfn_processors;
+  std::vector<MbsfnFrameProcessor*> mbsfn_processors;
   for (auto i = 0U; i < thread_cnt; i++) {
-    auto p = std::make_unique<MbsfnFrameProcessor>(cfg, rlc, phy, mac_log, rest_handler, rx_channels);
+    auto p = new MbsfnFrameProcessor(cfg, rlc, phy, mac_log, rest_handler, rx_channels);
     if (!p->init()) {
       spdlog::error("Failed to create MBSFN processor. Exiting.");
       exit(1);
     }
-    mbsfn_processors.push_back(std::move(p));
+    mbsfn_processors.push_back(p);
   }
 
   // Start receiving sample data
@@ -647,6 +648,9 @@ auto main(int argc, char **argv) -> int {
   }
 
   // Main loop ended by signal. Free the MBSFN processors, and bail.
+  for (auto i = 0U; i < thread_cnt; i++) {
+    delete( mbsfn_processors[i] );
+  }
   } catch (...) {
     exit(1);
   }
