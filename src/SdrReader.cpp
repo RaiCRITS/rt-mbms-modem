@@ -29,11 +29,20 @@
 #include "spdlog/spdlog.h"
 
 SdrReader:: ~SdrReader() {
+  // ALC: Ensure reader thread is stopped and joined before tearing down streams
+  // This prevents segfaults from UHD/Soapy when closing while readStream() may be executing
+  if (_running) {
+    try {
+      stop();
+    } catch (...) {
+      // Destructor must not throw
+    }
+  }
   if (_sdr != nullptr) {
     auto sdr = (SoapySDR::Device*)_sdr;
-    sdr->deactivateStream((SoapySDR::Stream*)_stream, 0, 0);
-    sdr->closeStream((SoapySDR::Stream*)_stream);
     SoapySDR::Device::unmake( sdr );
+    _sdr = nullptr;
+    _stream = nullptr;
   }
 
   if (_reading_from_file) {
@@ -105,7 +114,9 @@ void SdrReader::init_buffer() {
 }
 
 void SdrReader::clear_buffer() {
-  _buffer->clear();
+  if (_buffer) {
+    _buffer->clear();
+  }
   _high_watermark_reached = false;
 }
 
@@ -233,7 +244,7 @@ void SdrReader::start() {
   thread_param.sched_priority = 50;
   _cfg.lookupValue("modem.sdr.reader_thread_priority_rt", thread_param.sched_priority);
 
-  spdlog::debug("Launching sample reader thread with realtime scheduling priority {}", thread_param.sched_priority);
+  spdlog::info("Launching sample reader thread with realtime scheduling priority {}", thread_param.sched_priority);  //ALC changed debug to info
 
   int error = pthread_setschedparam(_readerThread.native_handle(), SCHED_RR, &thread_param);
   if (error != 0) {
@@ -244,15 +255,27 @@ void SdrReader::start() {
 void SdrReader::stop() {
   if (!_running) return;
   spdlog::debug("Stopping SdrReader");
+  // Signal thread to stop
   _running = false;
 
-  if (_sdr != nullptr) {
-    auto sdr = (SoapySDR::Device*)_sdr;
-    sdr->deactivateStream((SoapySDR::Stream*)_stream, 0, 0);
-    sdr->closeStream((SoapySDR::Stream*)_stream);
+  // ALC: Join reader thread first to ensure it's not inside readStream when stream is closed
+  // This prevents race conditions that cause segfaults in UHD/Soapy
+  if (_readerThread.joinable()) {
+    _readerThread.join();
   }
 
-  _readerThread.join();
+  // ALC: Now it's safe to deactivate and close the stream
+  if (_sdr != nullptr && _stream != nullptr) {
+    auto sdr = (SoapySDR::Device*)_sdr;
+    try {
+      sdr->deactivateStream((SoapySDR::Stream*)_stream, 0, 0);
+      sdr->closeStream((SoapySDR::Stream*)_stream);
+    } catch (...) {
+      spdlog::warn("Exception while deactivating/closing SDR stream during stop");
+    }
+    _stream = nullptr;
+  }
+
   clear_buffer();
 }
 
@@ -261,7 +284,7 @@ void SdrReader::read() {
     int toRead = ceil(_sampleRate / 1000.0);
     //int toRead = 254;
     if (_buffer->free_size() < toRead * sizeof(cf_t)) {
-      spdlog::debug("ringbuffer overflow");
+      spdlog::debug("ringbuffer overflow");  //ALC change debug to info
       std::this_thread::sleep_for(std::chrono::microseconds(1000));
     } else {
       int read = 0;
@@ -295,16 +318,32 @@ void SdrReader::read() {
         read = sdr->readStream( (SoapySDR::Stream*)_stream, buffers.data(), std::min(writeable_samples, toRead), flags, time_ns);
 
 
-        if (read> 0) {
+        if (read > 0) {
           if (_writing_to_file && _write_samples) {
             srsran_filesink_write_multi(&file_sink, buffers.data(), read, (int)_rx_channels);
           }
           _buffer->commit( read * sizeof(cf_t) );
           spdlog::debug("buffer: commited {}, requested {}, writeable {}, flags {}", read, toRead, writeable_samples, flags);
         }
-        else {
-          spdlog::error("readStream returned {}", read);
+        else if (read == 0) {
+          // Zero samples - stream might be starved, retry with brief sleep
+          spdlog::trace("readStream returned 0 samples (flags={}, time_ns={})", flags, time_ns);
           _buffer->commit(0);
+          std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        else if (read == -1) {
+          // SOAPY_SDR_TIMEOUT - expected periodically
+          spdlog::trace("readStream timeout (flags={}, time_ns={})", flags, time_ns);
+          _buffer->commit(0);
+          std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        else {
+          // Other error (-4, -5, etc.)
+          spdlog::warn("readStream error {} (flags={}, time_ns={})", read, flags, time_ns);
+          spdlog::debug("readStream context: toRead={}, writeable_samples={}, sampleRate={}, buffer_used={}, buffer_free={}",
+                        toRead, writeable_samples, _sampleRate, _buffer->used_size(), _buffer->free_size());
+          _buffer->commit(0);
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
       }
     }
@@ -326,7 +365,19 @@ auto SdrReader::get_samples(cf_t* data[SRSRAN_MAX_CHANNELS], uint32_t nsamples, 
   }
 
   if (!_high_watermark_reached) {
+    // Wait for ringbuffer to fill but with timeout to prevent infinite wait if reader thread fails
+    const auto timeout_duration = std::chrono::milliseconds(5000);  // 5 second timeout
+    auto timeout_deadline = std::chrono::steady_clock::now() + timeout_duration;
+    
     while (static_cast<double>(_buffer->used_size()) < (_sampleRate / 1000.0) * (_buffer_ms / 2.0) * sizeof(cf_t)) {
+      if (std::chrono::steady_clock::now() > timeout_deadline) {
+        spdlog::error("get_samples: timeout waiting for ringbuffer to fill. used={}, target={}, buffer_ms={}",
+                      _buffer->used_size(),
+                      static_cast<int>((_sampleRate / 1000.0) * (_buffer_ms / 2.0) * sizeof(cf_t)),
+                      _buffer_ms);
+        // Return gracefully with error
+        return -1;
+      }
       std::this_thread::sleep_for(std::chrono::microseconds(500));
     }
     spdlog::debug("Filled ringbuffer to half capacity");
@@ -363,7 +414,8 @@ auto SdrReader::get_samples(cf_t* data[SRSRAN_MAX_CHANNELS], uint32_t nsamples, 
   }
 
   _last_read = std::chrono::steady_clock::now();
-  return 0;
+  spdlog::debug("get_samples: returning {} samples", nsamples);
+  return static_cast<int>(nsamples);
 }
 
 auto SdrReader::get_buffer_level() -> double

@@ -22,6 +22,7 @@
 
 
 auto CasFrameProcessor::init() -> bool {
+  cfg.lookupValue("modem.phy.visualization_data_interval", _vis_data_interval);  //ALC read from config how often to send visualization data to the REST API (e.g. for constellation diagram). 1 = every subframe, 2 = every 2nd subframe, etc.
   _signal_buffer_max_samples = 3 * SRSRAN_SF_LEN_PRB(MAX_PRB);
 
   for (auto ch = 0U; ch < _rx_channels; ch++) {
@@ -142,8 +143,10 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
       }
     }
 
-    _rest._pdsch.SetData(pdsch_data());
-    _rest._ce_values = ce_values();
+    if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
+        _rest._pdsch.SetData(pdsch_data());
+        _rest._ce_values = ce_values();
+    }
 
     // Decode PDSCH..
     auto ret = srsran_ue_dl_decode_pdsch(&_ue_dl, &_sf_cfg, &_ue_dl_cfg.cfg.pdsch, pdsch_res);

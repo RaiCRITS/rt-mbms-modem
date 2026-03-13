@@ -91,9 +91,6 @@ static struct argp_option options[] = {  // NOLINT
      "Override the number of PRB received in the MIB", 0},
     {"sdr_devices", 'd', nullptr, 0,
      "Prints a list of all available SDR devices", 0},
-    {"scan", 'S', "MODE", 0,
-     "Scan mode preset: 'TV8' (freq=610MHz, step=8MHz), 'TV6' (freq=605MHz, step=6MHz), 'TV6' (freq=613.5MHz, step=7MHz), or 'LTE' (freq=609.5MHz, step=5MHz). When set, overrides config file frequency_step_hz and number_of_step.",
-     0},
     {nullptr, 0, nullptr, 0, nullptr, 0}};
 
 /**
@@ -109,7 +106,6 @@ struct arguments {
   const char
       *write_sample_file = {};   /**< file path of the created sample file. */
   bool list_sdr_devices = false;
-  const char *scan_mode = {};    /**< scan preset mode: "Europe", "America", or "LTE" */
 };
 
 /**
@@ -143,9 +139,6 @@ static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
       break;
     case 'd':
       arguments->list_sdr_devices = true;
-      break;
-    case 'S':
-      arguments->scan_mode = arg;
       break;
     case ARGP_KEY_ARG:
       argp_usage(state);
@@ -211,44 +204,6 @@ void set_params(const std::string& ant, unsigned fc, double g, unsigned sr, unsi
       frequency, bandwidth, sample_rate, gain, antenna);
 
   restart = true;
-}
-
-/**
- * Writes the discovered center frequency to the configuration file.
- * 
- * @param config_file Path to the configuration file
- * @param freq The frequency to write (in Hz)
- */
-void write_frequency_to_config(const char* config_file, unsigned freq) {
-  try {
-    Config cfg;
-    cfg.readFile(config_file);
-    
-    // Get the modem.sdr setting group
-    libconfig::Setting& root = cfg.getRoot();
-    libconfig::Setting& modem = root["modem"];
-    libconfig::Setting& sdr = modem["sdr"];
-    
-    // Try to find and update existing center_frequency_hz setting
-    try {
-      sdr.lookup("center_frequency_hz") = (long long)freq;
-    } catch(const libconfig::SettingNotFoundException &ex) {
-      // If it doesn't exist, add it
-      sdr.add("center_frequency_hz", libconfig::Setting::TypeInt64) = (long long)freq;
-    }
-    
-    cfg.writeFile(config_file);
-    
-    spdlog::info("Written discovered frequency {} Hz ({} MHz) to config file {}", 
-        freq, freq / 1000000.0, config_file);
-  } catch(const FileIOException &fioex) {
-    spdlog::warn("I/O error while writing config file: {}. Frequency not saved.", config_file);
-  } catch(const ParseException &pex) {
-    spdlog::warn("Config parse error while updating frequency: {}:{} - {}", 
-        pex.getFile(), pex.getLine(), pex.getError());
-  } catch(const std::exception &ex) {
-    spdlog::warn("Error while writing frequency to config: {}", ex.what());
-  }
 }
 
 /**
@@ -337,61 +292,21 @@ auto main(int argc, char **argv) -> int {
 
   /* ALC: Optional frequency stepping for scanning around the configured frequency. */
   unsigned frequency_step = 1000000; 
-  unsigned number_of_step = 0;
-  //bool use_scan_mode = false;
-  
-  // Check if scan mode is specified
-  if (arguments.scan_mode != nullptr) {
-    std::string mode_str = arguments.scan_mode;
-    if (mode_str == "TV8") {
-      frequency = 610000000;  // 610 MHz
-      frequency_step = 8000000;  // 8 MHz
-      number_of_step = 10;
-      //use_scan_mode = true;
-      spdlog::info("Using Europe scan mode: frequency=610 MHz, frequency_step=8 MHz");
-    } else if (mode_str == "TV6") {
-      frequency = 605000000;  // 605 MHz
-      frequency_step = 6000000;  // 6 MHz
-      number_of_step = 15;
-      //use_scan_mode = true;
-      spdlog::info("Using America scan mode: frequency=605 MHz, frequency_step=6 MHz");
-    } else if (mode_str == "TV7") {
-      frequency = 613500000;  // 613.5 MHz
-      frequency_step = 7000000;  // 7 MHz
-      number_of_step = 17;
-      //use_scan_mode = true;
-      spdlog::info("Using LTE scan mode: frequency=609.5 MHz, frequency_step=5 MHz");
-    } else if (mode_str == "LTE") {
-      frequency = 609500000;  // 609.5 MHz
-      frequency_step = 5000000;  // 5 MHz
-      number_of_step = 17;
-      //use_scan_mode = true;
-      spdlog::info("Using LTE scan mode: frequency=609.5 MHz, frequency_step=5 MHz");
-    } else {
-      spdlog::error("Unknown scan mode: {}. Valid modes are: Europe, America, LTE", mode_str);
-      exit(1);
-    }
+  unsigned number_of_step = 1;       
+  int tmp_step_int = 0;
+  int tmp_nsteps_int = 0;
+  if (cfg.lookupValue("modem.sdr.frequency_step_hz", tmp_step_int)) {
+    if (tmp_step_int > 0) frequency_step = static_cast<unsigned>(tmp_step_int);
+    spdlog::info("Loaded frequency_step_hz from config: {}", frequency_step);
+  } else {
+    spdlog::warn("modem.sdr.frequency_step_hz not found in config. Using default: 1000000 Hz");
   }
-  
-  // Only read from config file if scan mode is not being used
-  /*
-  if (!use_scan_mode) {
-    int tmp_step_int = 0;
-    int tmp_nsteps_int = 0;
-    if (cfg.lookupValue("modem.sdr.frequency_step_hz", tmp_step_int)) {
-      if (tmp_step_int > 0) frequency_step = static_cast<unsigned>(tmp_step_int);
-      spdlog::info("Loaded frequency_step_hz from config: {}", frequency_step);
-    } else {
-      spdlog::warn("modem.sdr.frequency_step_hz not found in config. Using default: 1000000 Hz");
-    }
-    if (cfg.lookupValue("modem.sdr.number_of_step", tmp_nsteps_int)) {
-      if (tmp_nsteps_int > 0) number_of_step = static_cast<unsigned>(tmp_nsteps_int);
-      spdlog::info("Loaded number_of_step from config: {}", number_of_step);
-    } else {
-      spdlog::warn("modem.sdr.number_of_step not found in config. Using default: 1");
-    }
-      
-  }*/
+  if (cfg.lookupValue("modem.sdr.number_of_step", tmp_nsteps_int)) {
+    if (tmp_nsteps_int > 0) number_of_step = static_cast<unsigned>(tmp_nsteps_int);
+    spdlog::info("Loaded number_of_step from config: {}", number_of_step);
+  } else {
+    spdlog::warn("modem.sdr.number_of_step not found in config. Using default: 1");
+  }
   /* --- ALC: Optional frequency stepping for scanning around the configured frequency. */
 
   cfg.lookupValue("modem.sdr.normalized_gain", gain);
@@ -537,11 +452,6 @@ auto main(int argc, char **argv) -> int {
       if (cell_found) {
         // A cell has been found. We now know the required number of PRB = bandwidth of the carrier. Set the approproiate
         // sample rate...
-        spdlog::info("Cell found at frequency {} MHz", frequency / 1e6);
-        
-        // Write the discovered frequency to the configuration file
-        write_frequency_to_config(arguments.config_file, frequency);
-        
         cas_nof_prb = mbsfn_nof_prb = phy.nr_prb();
 
         if (arguments.sample_file && arguments.file_bw) {

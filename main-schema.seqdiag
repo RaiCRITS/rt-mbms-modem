@@ -1,0 +1,44 @@
+sequenceDiagram
+    participant Main as Main Thread
+    participant SDR as SdrReader
+    participant Buffer as MultichannelRingbuffer
+    participant Reader as Reader Thread
+    participant Proc as Frame Processor
+
+    Main->>SDR: tune()
+    SDR->>SDR: init_buffer()
+    SDR->>Buffer: Constructor<br/>Allocate buffers
+    
+    Main->>SDR: start()
+    SDR->>Reader: Launch Thread
+    Main->>SDR: clear_buffer()
+    SDR->>Buffer: clear()
+    
+    par Reader Thread
+        loop Read Samples
+            Reader->>Buffer: free_size()
+            alt Space Available
+                Reader->>Buffer: write_head(&writeable)
+                Reader->>Buffer: commit(samples_written)
+            else No Space
+                Reader->>Reader: sleep(1ms)
+            end
+        end
+    and Main Thread
+        loop Process Frames
+            Main->>SDR: get_samples()
+            SDR->>Buffer: used_size()
+            SDR->>Buffer: read(buffers, size)
+            SDR->>Buffer: capacity()
+            SDR->>Proc: Pass data
+            Proc->>Proc: Process
+            Main->>SDR: get_buffer_level()
+            SDR->>Buffer: used_size()
+        end
+    end
+    
+    Main->>SDR: stop()
+    SDR->>Reader: Signal Stop
+    Reader->>Reader: Exit Loop
+    SDR->>Buffer: clear()
+    SDR->>Buffer: Destructor<br/>Free memory
