@@ -128,4 +128,8 @@ class CasFrameProcessor {
     srsran_cell_t _cell;
     std::mutex _mutex;
     unsigned _rx_channels;
+
+    //ALC added for visualization data throttling
+    int _vis_data_interval = 1;  // 1 = every subframe 
+    int _vis_data_counter  = 0;
 };

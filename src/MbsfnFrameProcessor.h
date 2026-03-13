@@ -56,6 +56,7 @@ class MbsfnFrameProcessor {
       {
         _allow_rrc_sn_across_periods = false;
         cfg.lookupValue("modem.phy.allow_rrc_sn_across_periods", _allow_rrc_sn_across_periods);
+        cfg.lookupValue("modem.phy.visualization_data_interval", _vis_data_interval);
       }
 
     /**
@@ -160,4 +161,6 @@ class MbsfnFrameProcessor {
 
     static std::mutex _rlc_mutex;
     static int _current_mcs;
+    int _vis_data_interval = 1;
+    int _vis_data_counter  = 0;
 };

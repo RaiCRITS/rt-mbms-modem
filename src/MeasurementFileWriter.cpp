@@ -37,6 +37,16 @@ const uint32_t kMaxTimestringSize = 80;
 MeasurementFileWriter::MeasurementFileWriter(const libconfig::Config& cfg)
       : _cfg(cfg) {
   bool gps_enabled = false;
+
+  // open and read 
+  std::string file_loc = "/tmp/modem_measurements.csv";
+  _cfg.lookupValue("modem.measurement_file.file_path", file_loc);
+  _file.open(file_loc, std::ios_base::app);
+  if (!_file.is_open()) {
+      spdlog::error("Cannot open measurement file: {}", file_loc);
+  }
+  // end
+
   _cfg.lookupValue("modem.measurement_file.gpsd.enabled", gps_enabled);
 
   if (gps_enabled) {
@@ -60,7 +70,15 @@ MeasurementFileWriter::MeasurementFileWriter(const libconfig::Config& cfg)
 
 MeasurementFileWriter::~MeasurementFileWriter() {
   _running = false;
-  _gps_reader_thread.join();
+  if (_gps_reader_thread.joinable()) {  // ← controlla SEMPRE prima di join
+    _gps_reader_thread.join();
+  }
+  //ALC close file 
+  if (_file.is_open()) {
+    _file.close();
+  }
+  //ALC end 
+
 }
 
 void MeasurementFileWriter::ReadGps() {
@@ -71,8 +89,8 @@ void MeasurementFileWriter::ReadGps() {
           continue;
         }
       }
-
-      if ((_gps_data = _gps->read()) != nullptr) {
+      _gps_data = _gps->read();
+      if (_gps_data != nullptr) {
         if ((_gps_data->set & TIME_SET) != 0) {
           struct tm ts = *localtime(&_gps_data->fix.time.tv_sec);
           std::string buf;
@@ -120,10 +138,8 @@ void MeasurementFileWriter::WriteLogValues(
     }
   }
 
-  std::string file_loc = "/tmp/modem_measurements.csv";
-  _cfg.lookupValue("modem.measurement_file.file_path", file_loc);
-  std::ofstream file;
-  file.open(file_loc, std::ios_base::app);
-  file << line << std::endl;
-  file.close();
+  if (_file.is_open()) {
+      _file << line << "\n";
+      _file.flush();
+  }
 }

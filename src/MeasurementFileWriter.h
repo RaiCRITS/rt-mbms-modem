@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <fstream>      //ALC added for fstream
 
 #include <libconfig.h++>
 
@@ -61,7 +62,7 @@ class MeasurementFileWriter {
 
  private:
     void ReadGps();
-
+    std::ofstream _file; //ALC added to keep file open
     const libconfig::Config& _cfg;
 
     std::unique_ptr<gpsmm> _gps;

@@ -46,7 +46,7 @@ auto MbsfnFrameProcessor::init() -> bool {
   _ue_dl_cfg.snr_to_cqi_offset = 0;
 
   srsran_chest_dl_cfg_t* chest_cfg = &_ue_dl_cfg.chest_cfg;
-  bzero(chest_cfg, sizeof(srsran_chest_dl_cfg_t));
+  memset(chest_cfg, 0, sizeof(srsran_chest_dl_cfg_t));
   chest_cfg->filter_coef[0] = 0.1;
   chest_cfg->filter_type = SRSRAN_CHEST_FILTER_TRIANGLE;
   chest_cfg->noise_alg = SRSRAN_NOISE_ALG_EMPTY;
@@ -163,10 +163,14 @@ auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
          pmch_dec.avg_iterations_block);
 
   if (mbsfn_cfg.is_mcch) {
-    _rest._mcch.SetData(mch_data());
+    if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) {
+      _rest._mcch.SetData(mch_data());
+    }
     _rest._mcch.mcs = static_cast<int>(_pmch_cfg.pdsch_cfg.grant.tb[0].mcs_idx);
   } else {
-    _rest._mch[mch_idx].SetData(mch_data());
+    if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) {
+      _rest._mch[mch_idx].SetData(mch_data());
+    }
     _rest._mch[mch_idx].mcs = static_cast<int>(_pmch_cfg.pdsch_cfg.grant.tb[0].mcs_idx);
     _rest._mch[mch_idx].present = true;
   }
