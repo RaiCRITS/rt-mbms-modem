@@ -22,7 +22,6 @@
 
 
 auto CasFrameProcessor::init() -> bool {
-  cfg.lookupValue("modem.phy.visualization_data_interval", _vis_data_interval);  //ALC read from config how often to send visualization data to the REST API (e.g. for constellation diagram). 1 = every subframe, 2 = every 2nd subframe, etc.
   _signal_buffer_max_samples = 3 * SRSRAN_SF_LEN_PRB(MAX_PRB);
 
   for (auto ch = 0U; ch < _rx_channels; ch++) {
