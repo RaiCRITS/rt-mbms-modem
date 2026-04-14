@@ -56,13 +56,13 @@ auto MbsfnFrameProcessor::init() -> bool {
   chest_cfg->cfo_estimate_enable  = false;
 
   _ue_dl_cfg.cfg.pdsch.csi_enable         = true;
-  _ue_dl_cfg.cfg.pdsch.max_nof_iterations = 8;
+  _ue_dl_cfg.cfg.pdsch.max_nof_iterations = 16;
   _ue_dl_cfg.cfg.pdsch.meas_evm_en        = false;
   _ue_dl_cfg.cfg.pdsch.decoder_type       = SRSRAN_MIMO_DECODER_MMSE;
   _ue_dl_cfg.cfg.pdsch.softbuffers.rx[0] = &_softbuffer;
 
   _pmch_cfg.pdsch_cfg.csi_enable         = true;
-  _pmch_cfg.pdsch_cfg.max_nof_iterations = 8;
+  _pmch_cfg.pdsch_cfg.max_nof_iterations = 16;
   _pmch_cfg.pdsch_cfg.meas_evm_en        = false;
   _pmch_cfg.pdsch_cfg.decoder_type       = SRSRAN_MIMO_DECODER_MMSE;
 
@@ -135,12 +135,31 @@ auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
 
   _pmch_cfg.area_id = _area_id;
 
-  srsran_softbuffer_rx_reset_cb(&_softbuffer, 1);
+  // For MCCH: accumulate LLRs across ALL MCCH occurrences (different sfn, different
+  // repetition periods) until CRC passes. The TB is static in a broadcast scenario,
+  // so cross-period combining is valid and is needed when coding rate is high (~0.74
+  // at MCS 12 / 2.5 kHz). Softbuffer is reset only once on the first MCCH subframe
+  // (or after configure_mbsfn() re-init). For MCH: always reset per subframe.
+  bool reset_softbuffer;
+  if (!mbsfn_cfg.is_mcch) {
+    reset_softbuffer = true;
+  } else {
+    reset_softbuffer = !_mcch_softbuffer_initialized;
+    if (!_mcch_softbuffer_initialized) {
+      _mcch_softbuffer_initialized = true;
+    }
+  }
+
+  if (reset_softbuffer) {
+    srsran_softbuffer_rx_reset_cb(&_softbuffer, 1);
+  }
 
   srsran_pdsch_res_t pmch_dec = {};
   _pmch_cfg.pdsch_cfg.softbuffers.rx[0] = &_softbuffer;
   pmch_dec.payload = _payload_buffer;
-  srsran_softbuffer_rx_reset_tbs(_pmch_cfg.pdsch_cfg.softbuffers.rx[0], _pmch_cfg.pdsch_cfg.grant.tb[0].tbs);
+  if (reset_softbuffer) {
+    srsran_softbuffer_rx_reset_tbs(_pmch_cfg.pdsch_cfg.softbuffers.rx[0], _pmch_cfg.pdsch_cfg.grant.tb[0].tbs);
+  }
 
   if (srsran_ue_dl_decode_pmch(&_ue_dl, &_sf_cfg, &_pmch_cfg, &pmch_dec) != 0) {
     if (mbsfn_cfg.is_mcch) {
@@ -259,6 +278,7 @@ auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
 void MbsfnFrameProcessor::configure_mbsfn(uint8_t area_id, srsran_scs_t subcarrier_spacing) {
   _sf_cfg.subcarrier_spacing = subcarrier_spacing;
   srsran_ue_dl_set_mbsfn_subcarrier_spacing(&_ue_dl, subcarrier_spacing);
+  _mcch_softbuffer_initialized = false;  // force softbuffer reset on next MCCH attempt
 
 
   srsran_ue_dl_set_mbsfn_area_id(&_ue_dl, area_id);

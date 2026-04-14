@@ -44,12 +44,14 @@ class CasFrameProcessor {
     *  @param rlc RLC reference
     *  @param rest RESTful API handler reference
     */
-   CasFrameProcessor(const libconfig::Config& /*cfg*/, Phy& phy, srsran::rlc& rlc, RestHandler& rest, unsigned rx_channels)
+   CasFrameProcessor(const libconfig::Config& cfg, Phy& phy, srsran::rlc& rlc, RestHandler& rest, unsigned rx_channels)
      : _rlc(rlc)
      , _phy(phy)
      , _rest(rest)
      , _rx_channels(rx_channels)
-     {}
+     {
+       cfg.lookupValue("modem.phy.visualization_data_interval", _vis_data_interval);
+     }
 
    /**
     *  Default destructor.

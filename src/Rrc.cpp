@@ -90,7 +90,7 @@ void Rrc::write_pdu_bcch_dlsch(srsran::unique_byte_buffer_t pdu) {
   spdlog::debug("BCCH-DLSCH MBMS message content:\n{}", json_writer.to_string());
 
   if (dlsch_msg.msg.c1().type() == bcch_dl_sch_msg_type_mbms_r14_c::c1_c_::types::sib_type1_mbms_r14) {
-    spdlog::debug("Processing SIB1-MBMS (1/1)");
+    spdlog::info("Received SIB1-MBMS ({} bytes)", pdu->N_bytes);
     handle_sib1(dlsch_msg.msg.c1().sib_type1_mbms_r14());
   } else {
     sys_info_r8_ies_s::sib_type_and_info_l_& sib_list =
@@ -102,7 +102,7 @@ void Rrc::write_pdu_bcch_dlsch(srsran::unique_byte_buffer_t pdu) {
           //handle_sib2();
           break;
         case sib_info_item_c::types::sib13_v920:
-          spdlog::debug("Handling SIB13\n");
+          spdlog::info("Received SIB13\n");
           _phy.set_mch_scheduling_info( srsran::make_sib13(sib.sib13_v920()));
           if (!_rlc.has_bearer_mrb(0, 0)) {
             _rlc.add_bearer_mrb(0, 0);
@@ -126,7 +126,7 @@ void Rrc::handle_sib1(const sib_type1_mbms_r14_s& sib1) {
   for (auto& i : sib1.sched_info_list_mbms_r14) {
     sched_info_mbms_r14_s::si_periodicity_r14_e_ p = i.si_periodicity_r14;
     for (auto t : i.sib_map_info_r14) {
-      spdlog::info("SIB scheduling info, sib_type={}, si_periodicity={}",
+      spdlog::debug("SIB scheduling info, sib_type={}, si_periodicity={}",
                    t.to_number(), p.to_number());
     }
   }

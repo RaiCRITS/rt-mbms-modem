@@ -156,6 +156,7 @@ class MbsfnFrameProcessor {
     unsigned _rx_channels;
 
     bool _allow_rrc_sn_across_periods = false;
+    bool _mcch_softbuffer_initialized = false;
     static std::mutex _sched_stop_mutex;
     static std::map<uint8_t, uint16_t> _sched_stops;
 

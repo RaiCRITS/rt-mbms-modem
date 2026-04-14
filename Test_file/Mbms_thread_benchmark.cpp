@@ -6,8 +6,10 @@
  * TEST 1 — LATENZA SINGOLO SUBFRAME
  *   Risponde a: "Un singolo frame processor riesce a finire entro 10ms?"
  *   Metodologia: esegue process_subframe() in serie, misura ogni singola
- *   chiamata. Se il P99 supera 10ms il modem perderà frame a prescindere
- *   da quanti thread configuri.
+ *   chiamata. Se il P99 supera 10ms il singolo thread non basta, ma piu'
+ *   thread in parallelo possono compensare (i subframe MBSFN sono indipendenti).
+ *   Solo se anche il Test 2 con tutti i thread disponibili fallisce, l'hardware
+ *   non e' adeguato per la configurazione PRB scelta.
  *
  * TEST 2 — PIPELINE DEPTH (quanti MBSFN processor tenere pronti)
  *   Risponde a: "Quanti frame posso elaborare in parallelo senza che
@@ -188,7 +190,9 @@ struct Stats {
 // TEST 1: latenza singolo subframe (serie, senza parallelismo)
 //
 // Simula: il main loop chiama process() su UN processore alla volta.
-// Se il P99 supera 10ms, il modem perde frame a prescindere dai thread.
+// Se il P99 supera 10ms, il singolo thread non basta — ma i subframe MBSFN
+// sono indipendenti, quindi piu' thread in parallelo possono compensare.
+// Il Test 2 determina quanti thread sono effettivamente necessari.
 // ═════════════════════════════════════════════════════════════════════════════
 static Stats test1_single_latency(const WorkloadParams& p, int nsamples) {
     std::vector<double> times;
@@ -342,15 +346,15 @@ int main(int argc, char* argv[]) {
             << COL_RESET;
     } else {
         std::cout << COL_RED << COL_BOLD
-            << "  ✗ FALLITO — il singolo frame processor supera il budget!\n"
+            << "  ! ATTENZIONE — il singolo frame processor supera il budget!\n"
             << "    (P99 " << s1.p99 << " ms > " << LTE_BUDGET_MS << " ms)\n"
-            << "    Questo hardware non puo' decodificare " << p.nof_prb
-            << " PRB in real-time.\n"
-            << "    Prova con meno PRB (--prb 15 o --prb 6) o\n"
-            << "    riduci le iterazioni turbo (--turbo 4).\n"
+            << "    Il singolo thread non basta, ma piu' thread in parallelo\n"
+            << "    potrebbero compensare (ogni subframe e' indipendente).\n"
+            << "    Continuo con il Test 2 per determinare quanti thread servono.\n"
+            << "    Se anche il Test 2 fallisce con tutti i thread disponibili,\n"
+            << "    prova --prb 15 / --prb 6 oppure --turbo 4.\n"
             << COL_RESET;
         std::cout << "\n";
-        return 1;
     }
 
     // ── TEST 2 ────────────────────────────────────────────────────────────────

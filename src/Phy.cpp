@@ -69,7 +69,7 @@ auto Phy::synchronize_subframe() -> bool {
     std::array<uint8_t, SRSRAN_BCH_PAYLOAD_LEN> bch_payload = {};
     auto sfn = srsran_ue_sync_get_sfn(&_ue_sync);
     auto sf = srsran_ue_sync_get_sfidx(&_ue_sync);
-    if ((_cell.mbms_dedicated && sf == 0 && sfn % 4 == 0) ||
+    if ((_cell.mbms_dedicated && sf == 0 && (sfn % 4 == 0 || _cell.has_pbch_repetition_r16)) ||
         (!_cell.mbms_dedicated && sf == 0)) {
       int sfn_offset = 0;
    //   srsran_ue_mib_reset(&_mib);
@@ -133,6 +133,7 @@ auto Phy::cell_search() -> bool {
 
   // Try to decode MIB-MBMS
   new_cell.mbms_dedicated = true;
+  new_cell.has_pbch_repetition_r16 = _has_pbch_repetition_r16;
   if (srsran_ue_mib_sync_set_cell_prb(&_mib_sync, new_cell, _cs_nof_prb) != 0) {
     spdlog::error("Phy: Error setting UE MIB sync cell");
     return false;

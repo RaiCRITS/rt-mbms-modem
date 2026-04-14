@@ -323,7 +323,7 @@ void SdrReader::read() {
             srsran_filesink_write_multi(&file_sink, buffers.data(), read, (int)_rx_channels);
           }
           _buffer->commit( read * sizeof(cf_t) );
-          spdlog::debug("buffer: commited {}, requested {}, writeable {}, flags {}", read, toRead, writeable_samples, flags);
+          spdlog::trace("buffer: commited {}, requested {}, writeable {}, flags {}", read, toRead, writeable_samples, flags);
         }
         else if (read == 0) {
           // Zero samples - stream might be starved, retry with brief sleep
