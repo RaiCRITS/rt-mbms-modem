@@ -48,7 +48,8 @@ set(CMAKE_CXX_CLANG_TIDY clang-tidy --format-style=google --checks=clang-diagnos
 
 add_executable(modem src/main.cpp src/SdrReader.cpp src/Phy.cpp
   src/CasFrameProcessor.cpp src/MbsfnFrameProcessor.cpp src/Rrc.cpp
-  src/Gw.cpp src/RestHandler.cpp src/MeasurementFileWriter.cpp src/MultichannelRingbuffer.cpp)
+  src/Gw.cpp src/RestHandler.cpp src/MeasurementFileWriter.cpp src/MultichannelRingbuffer.cpp
+  src/dview.cpp)
 
 target_link_libraries( modem
     LINK_PUBLIC
