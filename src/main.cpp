@@ -30,6 +30,7 @@
 
 #include <argp.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <libconfig.h++>
 
@@ -49,6 +50,8 @@
 #include "srsran/upper/pdcp.h"
 #include "srsran/rlc/rlc.h"
 #include "thread_pool.hpp"
+
+ #include "dview.hpp" //ALC add loggher
 
 
 using libconfig::Config;
@@ -517,6 +520,10 @@ auto main(int argc, char **argv) -> int {
   // Start the main processing loop
   unsigned start_frequency = frequency;  // Remember the frequency for restart scan -  ALC
   unsigned step = 0;  // number of step for search frequency - ALC
+  unsigned sync_fail_count = 0;   // consecutive MIB sync failures in syncing state - ALC
+  unsigned search_fail_count = 0; // consecutive cell_search() failures in searching state - ALC
+  unsigned max_sync_fails = 5;    // max failures before forcing a frequency scan restart - ALC
+  cfg.lookupValue("modem.phy.max_sync_fails", max_sync_fails);
   for (;;) {
     if (state == searching) {
       if (restart) {
@@ -535,6 +542,7 @@ auto main(int argc, char **argv) -> int {
       // TODO: Re-enable cell_search_adv once wideband scanner buffer allocation is fixed
       bool cell_found = phy.cell_search();  // Fallback to stable cell_search for now
       if (cell_found) {
+        search_fail_count = 0;  // reset on success - ALC
         // A cell has been found. We now know the required number of PRB = bandwidth of the carrier. Set the approproiate
         // sample rate...
         spdlog::info("Cell found at frequency {} MHz", frequency / 1e6);
@@ -570,6 +578,17 @@ auto main(int argc, char **argv) -> int {
         // ... and move to syncing state.
         state = syncing;
       } else {
+        // cell_search() failed — check for persistent overflow/MIB failure and force SDR hard reset - ALC
+        search_fail_count++;
+        if (search_fail_count >= max_sync_fails) {
+          spdlog::warn("cell_search failed {} times in a row — forcing SDR hard reset to recover from buffer overflow.", search_fail_count);
+          search_fail_count = 0;
+          sdr.stop();
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+          sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
+          sdr.start();
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
         //frequency-step search loop added — try `number_of_step` frequencies spaced by `frequency_step` - ALC
         if (step < number_of_step) {
           step++;
@@ -605,14 +624,25 @@ auto main(int argc, char **argv) -> int {
       }
 
       if (max_frames == 0 && !sfn_sync) {
-        // Failed. Back to square one: search state.
-        spdlog::warn("Synchronization failed. Going back to search state.");
+        sync_fail_count++;
+        spdlog::warn("Synchronization failed ({}/{}). Going back to search state.", sync_fail_count, max_sync_fails);
+        if (sync_fail_count >= max_sync_fails) {
+          spdlog::warn("Too many consecutive sync failures — forcing frequency scan restart.");
+          sync_fail_count = 0;
+          step = 0;
+          frequency = start_frequency;
+          sample_rate = search_sample_rate;
+          sdr.stop();
+          sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
+          sdr.start();
+        }
         state = searching;
         sleep(1);
       }
 
       if (sfn_sync) {
         // We're locked on to the cell, and have succesfully received the MIB at the target sample rate.
+        sync_fail_count = 0;  // reset failure counter on successful sync - ALC
         spdlog::info("Decoded MIB at target sample rate, TTI is {}. Subframe synchronized.", phy.tti());
 
         // Set the cell parameters in the CAS processor
@@ -629,6 +659,7 @@ auto main(int argc, char **argv) -> int {
 
         // Ready to receive actual data. Go to processing state.
         state = processing;
+//        dvw::start();
 
         // If sample file creation is enabled, start writing out samples now that we're at the target sample rate
         sdr.enableSampleFileWriting();
@@ -637,6 +668,7 @@ auto main(int argc, char **argv) -> int {
       int mb_idx = 0;
       while (state == processing) {
         tti = (tti + 1) % 10240; // Clamp the TTI
+//        dvw::log_i("tti", tti); //ALC log the TTI for debugging purposes
         if (phy.is_cas_subframe(tti)) {
           // Get the samples from the SDR interface, hand them to a CAS processor, and start it
           // on a thread from the pool.
@@ -689,7 +721,6 @@ auto main(int argc, char **argv) -> int {
         } else {
           // All other frames in FeMBMS dedicated mode are MBSFN frames.
           spdlog::debug("sending tti {} to mbsfn proc {}", tti, mb_idx);
-
           // Get the samples from the SDR interface, hand them to an MNSFN processor, and start it
           // on a thread from the pool. Getting the buffer pointer from the pool also locks this processor.
           if (!restart && phy.get_next_frame(mbsfn_processors[mb_idx]->get_rx_buffer_and_lock(), mbsfn_processors[mb_idx]->rx_buffer_size())) {
@@ -789,6 +820,7 @@ auto main(int argc, char **argv) -> int {
           }
         }
       }
+//      dvw::stop();
     }
   }
 
