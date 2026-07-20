@@ -20,6 +20,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <string>
 #include <thread>
 #include <vector>

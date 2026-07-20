@@ -21,6 +21,9 @@
 
 #include <memory>
 #include <utility>
+#include <thread>
+#include <chrono>
+#include <cstdlib>
 
 #include "spdlog/spdlog.h"
 
@@ -68,23 +71,53 @@ RestHandler::RestHandler(const libconfig::Config& cfg, const std::string& url,
 
   _listener->support(methods::GET, std::bind(&RestHandler::get, this, std::placeholders::_1));  // NOLINT
   _listener->support(methods::PUT, std::bind(&RestHandler::put, this, std::placeholders::_1));  // NOLINT
+  _listener->support(methods::OPTIONS, std::bind(&RestHandler::options, this, std::placeholders::_1));  // NOLINT
 
   _listener->open().wait();
 }
 
 RestHandler::~RestHandler() = default;
 
+void RestHandler::reply_cors(const http_request& message, web::http::status_code status) {
+  web::http::http_response response(status);
+  response.headers().add(U("Access-Control-Allow-Origin"), U("*"));
+  message.reply(response);
+}
+
+void RestHandler::reply_cors(const http_request& message, web::http::status_code status, const value& body) {
+  web::http::http_response response(status);
+  response.headers().add(U("Access-Control-Allow-Origin"), U("*"));
+  response.set_body(body);
+  message.reply(response);
+}
+
+void RestHandler::reply_cors(const http_request& message, web::http::status_code status,
+    const Concurrency::streams::istream& body, const utility::string_t& content_type) {
+  web::http::http_response response(status);
+  response.headers().add(U("Access-Control-Allow-Origin"), U("*"));
+  response.set_body(body, content_type);
+  message.reply(response);
+}
+
+void RestHandler::options(const http_request& message) {
+  web::http::http_response response(status_codes::OK);
+  response.headers().add(U("Access-Control-Allow-Origin"), U("*"));
+  response.headers().add(U("Access-Control-Allow-Methods"), U("GET, PUT, OPTIONS"));
+  response.headers().add(U("Access-Control-Allow-Headers"), U("Content-Type, Authorization"));
+  message.reply(response);
+}
+
 void RestHandler::get(http_request message) {
   spdlog::debug("Received GET request {}", message.to_string() );
   auto paths = uri::split_path(uri::decode(message.relative_uri().path()));
   if (_require_bearer_token &&
     (message.headers()["Authorization"] != "Bearer " + _api_key)) {
-    message.reply(status_codes::Unauthorized);
+    reply_cors(message, status_codes::Unauthorized);
     return;
   }
 
   if (paths.empty()) {
-    message.reply(status_codes::NotFound);
+    reply_cors(message, status_codes::NotFound);
   } else {
     if (paths[0] == "status") {
       auto state = value::object();
@@ -110,7 +143,8 @@ void RestHandler::get(http_request message) {
       state["cfo"] = value(_phy.cfo());
       state["cinr_db"] = value(cinr_db());
       state["subcarrier_spacing"] = value(_phy.mbsfn_subcarrier_spacing_khz());
-      message.reply(status_codes::OK, state);
+      state["mbsfn_frame_time_us"] = value(mbsfn_frame_time_us.load());
+      reply_cors(message, status_codes::OK, state);
     } else if (paths[0] == "sdr_params") {
       value sdr = value::object();
       sdr["frequency"] = value(_sdr.get_frequency());
@@ -121,10 +155,10 @@ void RestHandler::get(http_request message) {
       sdr["antenna"] = value(_sdr.get_antenna());
       sdr["sample_rate"] = value(_sdr.get_sample_rate());
       sdr["buffer_level"] = value(_sdr.get_buffer_level());
-      message.reply(status_codes::OK, sdr);
+      reply_cors(message, status_codes::OK, sdr);
     } else if (paths[0] == "ce_values") {
       auto cestream = Concurrency::streams::bytestream::open_istream(_ce_values);
-      message.reply(status_codes::OK, cestream);
+      reply_cors(message, status_codes::OK, cestream);
     } else if (paths[0] == "pdsch_status") {
       value sdr = value::object();
       sdr["bler"] = value(static_cast<float>(_pdsch.errors) /
@@ -132,10 +166,10 @@ void RestHandler::get(http_request message) {
       sdr["ber"] = value(_pdsch.ber);
       sdr["mcs"] = value(_pdsch.mcs);
       sdr["present"] = 1;
-      message.reply(status_codes::OK, sdr);
+      reply_cors(message, status_codes::OK, sdr);
     } else if (paths[0] == "pdsch_data") {
       auto cestream = Concurrency::streams::bytestream::open_istream(_pdsch.GetData());
-      message.reply(status_codes::OK, cestream);
+      reply_cors(message, status_codes::OK, cestream);
     } else if (paths[0] == "mcch_status") {
       value sdr = value::object();
       sdr["bler"] = value(static_cast<float>(_mcch.errors) /
@@ -143,10 +177,10 @@ void RestHandler::get(http_request message) {
       sdr["ber"] = value(_mcch.ber);
       sdr["mcs"] = value(_mcch.mcs);
       sdr["present"] = 1;
-      message.reply(status_codes::OK, sdr);
+      reply_cors(message, status_codes::OK, sdr);
     } else if (paths[0] == "mcch_data") {
       auto cestream = Concurrency::streams::bytestream::open_istream(_mcch.GetData());
-      message.reply(status_codes::OK, cestream);
+      reply_cors(message, status_codes::OK, cestream);
     } else if (paths[0] == "mch_info") {
       std::vector<value> mi;
       auto mch_info = _phy.mch_info();
@@ -164,7 +198,7 @@ void RestHandler::get(http_request message) {
           m["mtchs"] = value::array(mti);
           mi.push_back(m);
       });
-      message.reply(status_codes::OK, value::array(mi));
+      reply_cors(message, status_codes::OK, value::array(mi));
     } else if (paths[0] == "mch_status") {
       int idx = std::stoi(paths[1]);
       value sdr = value::object();
@@ -173,18 +207,47 @@ void RestHandler::get(http_request message) {
       sdr["ber"] = value(_mch[idx].ber);
       sdr["mcs"] = value(_mch[idx].mcs);
       sdr["present"] = value(_mch[idx].present);
-      message.reply(status_codes::OK, sdr);
+      reply_cors(message, status_codes::OK, sdr);
     } else if (paths[0] == "mch_data") {
       int idx = std::stoi(paths[1]);
       auto cestream = Concurrency::streams::bytestream::open_istream(_mch[idx].GetData());
-      message.reply(status_codes::OK, cestream);
+      reply_cors(message, status_codes::OK, cestream);
+    } else if (paths[0] == "sib_info") {
+      value sib = value::object();
+      sib["mcch_configured"] = value(_phy.mcch_configured());
+
+      const auto& sib13 = _phy.sib13();
+      sib["nof_mbsfn_area_info"] = value(sib13.nof_mbsfn_area_info);
+
+      std::vector<value> areas;
+      for (uint32_t i = 0; i < sib13.nof_mbsfn_area_info; i++) {
+        const auto& area = sib13.mbsfn_area_info_list[i];
+        value a = value::object();
+        a["mbsfn_area_id"] = value(area.mbsfn_area_id);
+        a["pmch_bandwidth"] = value(area.pmch_bandwidth);
+        a["notif_ind"] = value(area.notif_ind);
+        a["subcarrier_spacing_khz"] = value(_phy.mbsfn_subcarrier_spacing_khz());
+
+        value mcch_cfg = value::object();
+        mcch_cfg["repeat_period_rf"] = value(srsran::enum_to_number(area.mcch_cfg.mcch_repeat_period));
+        mcch_cfg["offset"] = value(area.mcch_cfg.mcch_offset);
+        mcch_cfg["mod_period_enum"] = value(static_cast<int>(area.mcch_cfg.mcch_mod_period));
+        mcch_cfg["sf_alloc_info"] = value(area.mcch_cfg.sf_alloc_info);
+        mcch_cfg["sig_mcs"] = value(srsran::enum_to_number(area.mcch_cfg.sig_mcs));
+        a["mcch_cfg"] = mcch_cfg;
+
+        areas.push_back(a);
+      }
+      sib["mbsfn_area_info_list"] = value::array(areas);
+
+      reply_cors(message, status_codes::OK, sib);
     } else if (paths[0] == "log") {
       std::string logfile = "/var/log/syslog";
 
       Concurrency::streams::file_stream<uint8_t>::open_istream(logfile).then(
           [message](const Concurrency::streams::basic_istream<unsigned char>&
                         file_stream) {
-            message.reply(status_codes::OK, file_stream, "text/plain");
+            reply_cors(message, status_codes::OK, file_stream, "text/plain");
           });
     }
   }
@@ -195,13 +258,13 @@ void RestHandler::put(http_request message) {
 
   if (_require_bearer_token &&
     (message.headers()["Authorization"] != "Bearer " + _api_key)) {
-    message.reply(status_codes::Unauthorized);
+    reply_cors(message, status_codes::Unauthorized);
     return;
   }
 
   auto paths = uri::split_path(uri::decode(message.relative_uri().path()));
   if (paths.empty()) {
-    message.reply(status_codes::NotFound);
+    reply_cors(message, status_codes::NotFound);
   } else {
     if (paths[0] == "sdr_params") {
       value answer;
@@ -226,7 +289,18 @@ void RestHandler::put(http_request message) {
       }
       _set_params( a, static_cast<unsigned int>(f), g, static_cast<unsigned int>(sr), bw);
 
-      message.reply(status_codes::OK, answer);
+      reply_cors(message, status_codes::OK, answer);
+    } else if (paths[0] == "restart") {
+      reply_cors(message, status_codes::OK);
+      spdlog::warn("Restart requested via REST API. Exiting, relying on systemd Restart=always to relaunch.");
+      // Give the reply time to flush before the process exits.
+      // Use _exit() (not std::exit()) to skip C++ static destructors entirely: with the HTTP
+      // stack (cpprestsdk/boost::asio) still live and mid-request, exit() can deadlock in a
+      // destructor and never actually terminate the process.
+      std::thread([]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        std::_Exit(0);
+      }).detach();
     }
   }
 }

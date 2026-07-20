@@ -214,6 +214,11 @@ class Phy {
 
     srsran::mcch_msg_t& mcch() { return _mcch; }
 
+    /**
+     * Returns the SIB13 content received on the CAS (MBSFN area info, MCCH config)
+     */
+    const srsran::sib13_t& sib13() { return _sib13; }
+
     int _mcs = 0;
 
     get_samples_t _sample_cb;
