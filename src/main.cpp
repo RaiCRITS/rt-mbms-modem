@@ -97,6 +97,10 @@ static struct argp_option options[] = {  // NOLINT
     {"scan", 'S', "MODE", 0,
      "Scan mode preset: 'TV8' (freq=610MHz, step=8MHz), 'TV6' (freq=605MHz, step=6MHz), 'TV6' (freq=613.5MHz, step=7MHz), or 'LTE' (freq=609.5MHz, step=5MHz). When set, overrides config file frequency_step_hz and number_of_step.",
      0},
+    {"ce", 'e', "0|1", 0,
+     "Enable (1) or disable (0) channel estimate weighting in MBSFN soft demodulation. Overrides "
+     "modem.phy.ce_enable from the config file. Default (if neither is set): disabled.",
+     0},
     {nullptr, 0, nullptr, 0, nullptr, 0}};
 
 /**
@@ -113,6 +117,7 @@ struct arguments {
       *write_sample_file = {};   /**< file path of the created sample file. */
   bool list_sdr_devices = false;
   const char *scan_mode = {};    /**< scan preset mode: "Europe", "America", or "LTE" */
+  int8_t ce_enabled = -1;        /**< CLI override for modem.phy.ce_enable: -1 = not passed, 0/1 = force disabled/enabled */
 };
 
 /**
@@ -149,6 +154,9 @@ static auto parse_opt(int key, char *arg, struct argp_state *state) -> error_t {
       break;
     case 'S':
       arguments->scan_mode = arg;
+      break;
+    case 'e':
+      arguments->ce_enabled = (strtoul(arg, nullptr, 10) != 0) ? 1 : 0;
       break;
     case ARGP_KEY_ARG:
       argp_usage(state);
@@ -496,7 +504,7 @@ auto main(int argc, char **argv) -> int {
 
   std::vector<MbsfnFrameProcessor*> mbsfn_processors;
   for (auto i = 0U; i < thread_cnt; i++) {
-    auto p = new MbsfnFrameProcessor(cfg, rlc, phy, mac_log, rest_handler, rx_channels);
+    auto p = new MbsfnFrameProcessor(cfg, rlc, phy, mac_log, rest_handler, rx_channels, arguments.ce_enabled);
     if (!p->init()) {
       spdlog::error("Failed to create MBSFN processor. Exiting.");
       exit(1);

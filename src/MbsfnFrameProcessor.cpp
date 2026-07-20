@@ -55,16 +55,17 @@ auto MbsfnFrameProcessor::init() -> bool {
   chest_cfg->estimator_alg = SRSRAN_ESTIMATOR_ALG_INTERPOLATE;
   chest_cfg->cfo_estimate_enable  = false;
 
-  _ue_dl_cfg.cfg.pdsch.csi_enable         = true;
+  _ue_dl_cfg.cfg.pdsch.csi_enable         = false;
   _ue_dl_cfg.cfg.pdsch.max_nof_iterations = 8;
   _ue_dl_cfg.cfg.pdsch.meas_evm_en        = false;
   _ue_dl_cfg.cfg.pdsch.decoder_type       = SRSRAN_MIMO_DECODER_MMSE;
   _ue_dl_cfg.cfg.pdsch.softbuffers.rx[0] = &_softbuffer;
 
-  _pmch_cfg.pdsch_cfg.csi_enable         = true;
+  _pmch_cfg.pdsch_cfg.csi_enable         = false;
   _pmch_cfg.pdsch_cfg.max_nof_iterations = 8;
   _pmch_cfg.pdsch_cfg.meas_evm_en        = false;
   _pmch_cfg.pdsch_cfg.decoder_type       = SRSRAN_MIMO_DECODER_MMSE;
+  _pmch_cfg.ce_enable                    = _ce_enabled;
 
   _sf_cfg.sf_type = SRSRAN_SF_MBSFN;
   return true;
