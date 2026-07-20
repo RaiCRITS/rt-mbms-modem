@@ -47,7 +47,10 @@ class MbsfnFrameProcessor {
      *  @param log_h srsLTE log handle for the MCH MAC msg decoder
      *  @param rest RESTful API handler reference
      */
-    MbsfnFrameProcessor(const libconfig::Config& cfg, srsran::rlc& rlc, Phy& phy, srslog::basic_logger& log_h, RestHandler& rest, unsigned rx_channels )
+    /**
+     *  @param ce_enabled_override CLI override for modem.phy.ce_enable: -1 = not passed on CLI (use config value), 0/1 = force disabled/enabled
+     */
+    MbsfnFrameProcessor(const libconfig::Config& cfg, srsran::rlc& rlc, Phy& phy, srslog::basic_logger& log_h, RestHandler& rest, unsigned rx_channels, int8_t ce_enabled_override = -1 )
       : _rlc(rlc)
       , _phy(phy)
       , mch_mac_msg(20, log_h)
@@ -57,6 +60,12 @@ class MbsfnFrameProcessor {
         _allow_rrc_sn_across_periods = false;
         cfg.lookupValue("modem.phy.allow_rrc_sn_across_periods", _allow_rrc_sn_across_periods);
         cfg.lookupValue("modem.phy.visualization_data_interval", _vis_data_interval);
+
+        _ce_enabled = false;
+        cfg.lookupValue("modem.phy.ce_enable", _ce_enabled);
+        if (ce_enabled_override != -1) {
+          _ce_enabled = (ce_enabled_override != 0);
+        }
       }
 
     /**
@@ -154,6 +163,7 @@ class MbsfnFrameProcessor {
     RestHandler& _rest;
 
     unsigned _rx_channels;
+    bool _ce_enabled = false;
 
     bool _allow_rrc_sn_across_periods = false;
     static std::mutex _sched_stop_mutex;
