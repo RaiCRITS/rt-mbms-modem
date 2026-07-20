@@ -84,6 +84,16 @@ void MbsfnFrameProcessor::set_cell(srsran_cell_t cell) {
 auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
   spdlog::trace("Processing MBSFN TTI {}", tti);
 
+  auto start = std::chrono::steady_clock::now();
+  struct TimingGuard {
+    RestHandler& rest;
+    std::chrono::steady_clock::time_point start;
+    ~TimingGuard() {
+      auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+      rest.mbsfn_frame_time_us.store(static_cast<uint32_t>(us));
+    }
+  } timing_guard{_rest, start};
+
   uint32_t sfn = tti / 10;
   uint8_t sf = tti % 10;
 

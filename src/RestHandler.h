@@ -22,6 +22,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <atomic>
 #include <libconfig.h++>
 
 #include "SdrReader.h"
@@ -113,10 +114,23 @@ class RestHandler {
     float cinr_db() { return _cinr_db.size() ? (std::accumulate(_cinr_db.begin(), _cinr_db.end(), 0) / (_cinr_db.size() * 1.0)) : 0.0; };
     void add_cinr_value( float cinr);
 
+    /**
+     *  Processing time of the last MBSFN frame (microseconds)
+     */
+    std::atomic<uint32_t> mbsfn_frame_time_us{0};
+
   private:
     std::vector<float>  _cinr_db;
     void get(web::http::http_request message);
     void put(web::http::http_request message);
+    void options(const web::http::http_request& message);
+
+    // Replies with an Access-Control-Allow-Origin header so the REST API can be called
+    // directly from a web app served on a different origin/port (e.g. a local kiosk UI).
+    static void reply_cors(const web::http::http_request& message, web::http::status_code status);
+    static void reply_cors(const web::http::http_request& message, web::http::status_code status, const web::json::value& body);
+    static void reply_cors(const web::http::http_request& message, web::http::status_code status,
+        const Concurrency::streams::istream& body, const utility::string_t& content_type = U("application/octet-stream"));
 
     std::unique_ptr<web::http::experimental::listener::http_listener> _listener;
 
