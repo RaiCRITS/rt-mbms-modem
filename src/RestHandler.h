@@ -50,6 +50,12 @@ class RestHandler {
     typedef std::function<void(const std::string& antenna, unsigned fcen, double gain, unsigned sample_rate, unsigned bandwidth)> set_params_t;
 
     /**
+     *  Definition of the callback for switching to a named frequency-scan preset.
+     *  Returns false if the preset name isn't recognised.
+     */
+    typedef std::function<bool(const std::string& mode)> set_scan_mode_t;
+
+    /**
      *  Default constructor.
      *
      *  @param cfg Config singleton reference
@@ -57,9 +63,10 @@ class RestHandler {
      *  @param state Reference to the main loop sate
      *  @param sdr Reference to the SDR reader
      *  @param set_params Set parameters callback
+     *  @param set_scan_mode Set scan mode preset callback
      */
     RestHandler(const libconfig::Config& cfg, const std::string& url, state_t& state,
-        SdrReader& sdr, Phy& phy, set_params_t set_params);
+        SdrReader& sdr, Phy& phy, set_params_t set_params, set_scan_mode_t set_scan_mode);
     /**
      *  Default destructor.
      */
@@ -125,6 +132,10 @@ class RestHandler {
     void put(web::http::http_request message);
     void options(const web::http::http_request& message);
 
+    web::json::value get_system_status();
+    uint64_t _prev_cpu_total = 0;
+    uint64_t _prev_cpu_idle = 0;
+
     // Replies with an Access-Control-Allow-Origin header so the REST API can be called
     // directly from a web app served on a different origin/port (e.g. a local kiosk UI).
     static void reply_cors(const web::http::http_request& message, web::http::status_code status);
@@ -139,6 +150,7 @@ class RestHandler {
     Phy& _phy;
 
     set_params_t _set_params;
+    set_scan_mode_t _set_scan_mode;
 
     bool _require_bearer_token = false;
     std::string _api_key;

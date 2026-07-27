@@ -24,6 +24,8 @@
 #include <thread>
 #include <chrono>
 #include <cstdlib>
+#include <fstream>
+#include <sstream>
 
 #include "spdlog/spdlog.h"
 
@@ -37,11 +39,12 @@ using web::http::experimental::listener::http_listener_config;
 
 RestHandler::RestHandler(const libconfig::Config& cfg, const std::string& url,
                          state_t& state, SdrReader& sdr, Phy& phy,
-                         set_params_t set_params)
+                         set_params_t set_params, set_scan_mode_t set_scan_mode)
     : _state(state)
     , _sdr(sdr)
     , _phy(phy)
-    , _set_params(std::move(set_params)) 
+    , _set_params(std::move(set_params))
+    , _set_scan_mode(std::move(set_scan_mode))
 {
 
   http_listener_config server_config;
@@ -147,6 +150,7 @@ void RestHandler::get(http_request message) {
       reply_cors(message, status_codes::OK, state);
     } else if (paths[0] == "sdr_params") {
       value sdr = value::object();
+      sdr["hw_name"] = value(_sdr.get_hw_name());
       sdr["frequency"] = value(_sdr.get_frequency());
       sdr["gain"] = value(_sdr.get_gain());
       sdr["min_gain"] = value(_sdr.min_gain());
@@ -156,6 +160,8 @@ void RestHandler::get(http_request message) {
       sdr["sample_rate"] = value(_sdr.get_sample_rate());
       sdr["buffer_level"] = value(_sdr.get_buffer_level());
       reply_cors(message, status_codes::OK, sdr);
+    } else if (paths[0] == "system_status") {
+      reply_cors(message, status_codes::OK, get_system_status());
     } else if (paths[0] == "ce_values") {
       auto cestream = Concurrency::streams::bytestream::open_istream(_ce_values);
       reply_cors(message, status_codes::OK, cestream);
@@ -290,6 +296,16 @@ void RestHandler::put(http_request message) {
       _set_params( a, static_cast<unsigned int>(f), g, static_cast<unsigned int>(sr), bw);
 
       reply_cors(message, status_codes::OK, answer);
+    } else if (paths[0] == "scan_mode") {
+      const auto & jval = message.extract_json().get();
+      spdlog::debug("Received JSON: {}", jval.serialize());
+
+      if (!jval.has_field("mode") || !_set_scan_mode(jval.at("mode").as_string())) {
+        reply_cors(message, status_codes::BadRequest);
+      } else {
+        _state = searching;
+        reply_cors(message, status_codes::OK);
+      }
     } else if (paths[0] == "restart") {
       reply_cors(message, status_codes::OK);
       spdlog::warn("Restart requested via REST API. Exiting, relying on systemd Restart=always to relaunch.");
@@ -303,6 +319,71 @@ void RestHandler::put(http_request message) {
       }).detach();
     }
   }
+}
+
+value RestHandler::get_system_status() {
+  value status = value::object();
+
+  // CPU temp: LattePanda / most x86 boards expose it as thermal_zone0, millidegrees C.
+  std::ifstream temp_file("/sys/class/thermal/thermal_zone0/temp");
+  double temp_c = 0;
+  if (temp_file) {
+    long milli_c = 0;
+    temp_file >> milli_c;
+    temp_c = static_cast<double>(milli_c) / 1000.0;
+  }
+  status["cpu_temp_c"] = value(temp_c);
+
+  // CPU usage: delta of jiffies between this call and the previous one.
+  std::ifstream stat_file("/proc/stat");
+  double cpu_pct = 0;
+  if (stat_file) {
+    std::string cpu_label;
+    uint64_t user, nice, system, idle, iowait, irq, softirq, steal;
+    stat_file >> cpu_label >> user >> nice >> system >> idle >> iowait >> irq >> softirq >> steal;
+    uint64_t total = user + nice + system + idle + iowait + irq + softirq + steal;
+    uint64_t idle_all = idle + iowait;
+    uint64_t total_delta = total - _prev_cpu_total;
+    uint64_t idle_delta = idle_all - _prev_cpu_idle;
+    if (_prev_cpu_total && total_delta) {
+      cpu_pct = (1.0 - static_cast<double>(idle_delta) / static_cast<double>(total_delta)) * 100.0;
+    }
+    _prev_cpu_total = total;
+    _prev_cpu_idle = idle_all;
+  }
+  status["cpu_usage_pct"] = value(cpu_pct);
+
+  // RAM usage from MemTotal/MemAvailable.
+  std::ifstream mem_file("/proc/meminfo");
+  double ram_pct = 0;
+  if (mem_file) {
+    std::string line, key;
+    uint64_t mem_total = 0, mem_available = 0;
+    while (std::getline(mem_file, line)) {
+      std::istringstream iss(line);
+      iss >> key;
+      if (key == "MemTotal:") iss >> mem_total;
+      else if (key == "MemAvailable:") { iss >> mem_available; break; }
+    }
+    if (mem_total) ram_pct = (1.0 - static_cast<double>(mem_available) / static_cast<double>(mem_total)) * 100.0;
+  }
+  status["ram_usage_pct"] = value(ram_pct);
+
+  // Thread count of this process (modem, not system-wide).
+  std::ifstream proc_status_file("/proc/self/status");
+  int thread_count = 0;
+  if (proc_status_file) {
+    std::string line;
+    while (std::getline(proc_status_file, line)) {
+      if (line.rfind("Threads:", 0) == 0) {
+        std::istringstream(line.substr(8)) >> thread_count;
+        break;
+      }
+    }
+  }
+  status["thread_count"] = value(thread_count);
+
+  return status;
 }
 
 void RestHandler::add_cinr_value( float cinr) {
