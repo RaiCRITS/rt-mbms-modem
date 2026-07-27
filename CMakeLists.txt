@@ -69,14 +69,21 @@ target_link_libraries( modem
 )
 
 
-install(TARGETS modem)
-install(FILES supporting_files/5gmag-rt-modem.service DESTINATION /usr/lib/systemd/system)
-install(FILES supporting_files/rt-common-shared/mbms/common-config/5gmag-rt.conf DESTINATION /etc)
-install(FILES supporting_files/rt-common-shared/mbms/common-config/5gmag-rt DESTINATION /etc/default)
+install(TARGETS modem COMPONENT runtime)
+install(FILES supporting_files/5gmag-rt-modem.service DESTINATION /usr/lib/systemd/system COMPONENT runtime)
+install(FILES supporting_files/rt-common-shared/mbms/common-config/5gmag-rt.conf DESTINATION /etc COMPONENT config)
+install(FILES supporting_files/rt-common-shared/mbms/common-config/5gmag-rt DESTINATION /etc/default COMPONENT config)
 install(FILES supporting_files/pre_modem.sh DESTINATION /usr/share/5gmag-rt
   PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+  COMPONENT runtime
   )
-install(FILES supporting_files/modem_measurements DESTINATION /etc/logrotate.d)
+install(FILES supporting_files/modem_measurements DESTINATION /etc/logrotate.d COMPONENT config)
+
+add_custom_target(install-no-config
+  COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --component runtime
+  COMMENT "Installing modem without /etc config files"
+  USES_TERMINAL
+  )
 
 SET(CPACK_GENERATOR "DEB")
 SET(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)

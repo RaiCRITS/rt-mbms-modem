@@ -112,6 +112,11 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
   // Try to decode DCIs from PDCCH
   srsran_dci_dl_t dci[SRSRAN_MAX_CARRIERS] = {};    // NOLINT
   int nof_grants = srsran_ue_dl_find_dl_dci(&_ue_dl, &_sf_cfg, &_ue_dl_cfg, _cell.mbms_dedicated ? SRSRAN_SIRNTI_MBMS_DEDICATED : SRSRAN_SIRNTI, dci);
+
+  if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
+      _rest._ce_values = ce_values();
+  }
+
   for (int k = 0; k < nof_grants; k++) {
     char str[512];  // NOLINT
     srsran_dci_dl_info(&dci[k], str, 512);
@@ -142,9 +147,8 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
       }
     }
 
-    if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
+    if (_vis_data_interval > 0 && (_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
         _rest._pdsch.SetData(pdsch_data());
-        _rest._ce_values = ce_values();
     }
 
     // Decode PDSCH..

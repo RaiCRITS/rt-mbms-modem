@@ -95,7 +95,7 @@ static struct argp_option options[] = {  // NOLINT
     {"sdr_devices", 'd', nullptr, 0,
      "Prints a list of all available SDR devices", 0},
     {"scan", 'S', "MODE", 0,
-     "Scan mode preset: 'TV8' (freq=610MHz, step=8MHz), 'TV6' (freq=605MHz, step=6MHz), 'TV6' (freq=613.5MHz, step=7MHz), or 'LTE' (freq=609.5MHz, step=5MHz). When set, overrides config file frequency_step_hz and number_of_step.",
+     "Scan mode preset: 'TV8' (freq=610MHz, step=8MHz), 'TV6' (freq=605MHz, step=6MHz), 'TV7' (freq=613.5MHz, step=7MHz), or 'LTE' (freq=609.5MHz, step=5MHz). When set, overrides config file frequency_step_hz and number_of_step.",
      0},
     {"ce", 'e', "0|1", 0,
      "Enable (1) or disable (0) channel estimate weighting in MBSFN soft demodulation. Overrides "
@@ -189,6 +189,46 @@ static double gain = 0.9;               /**< Overall system gain for the SDR */
 static std::string antenna = "LNAW";    /**< Antenna input to be used */
 static bool use_agc = false;
 
+/* Frequency-step scanning around the configured/preset frequency. Global (not local to
+ * main()) so the RESTful API can also change scan mode at runtime, not just at startup. */
+static unsigned frequency_step = 1000000;
+static unsigned number_of_step = 0;
+static unsigned start_frequency = frequency;  /**< Frequency to return to when a scan restarts */
+static unsigned step = 0;                     /**< Current frequency-step index of the scan */
+
+/**
+ * One named frequency-scan preset (e.g. "TV8"): starting frequency, step size, and step count.
+ */
+struct ScanPreset {
+  unsigned freq;
+  unsigned step_hz;
+  unsigned n_steps;
+  const char* label;
+};
+
+/**
+ * Looks up a scan mode preset by name. Shared by CLI startup parsing and the
+ * RESTful API's runtime scan-mode switch, so the preset table only exists once.
+ *
+ * @param mode Preset name: "TV8", "TV6", "TV7", or "LTE"
+ * @param out Filled with the preset's parameters on success
+ * @return true if mode was recognised
+ */
+static bool lookup_scan_preset(const std::string& mode, ScanPreset& out) {
+  if (mode == "TV8") {
+    out = {610000000, 8000000, 10, "TV8"};
+  } else if (mode == "TV6") {
+    out = {605000000, 6000000, 15, "TV6"};
+  } else if (mode == "TV7") {
+    out = {613500000, 7000000, 17, "TV7"};
+  } else if (mode == "LTE") {
+    out = {609500000, 5000000, 17, "LTE"};
+  } else {
+    return false;
+  }
+  return true;
+}
+
 static unsigned mbsfn_nof_prb = 0;
 static unsigned cas_nof_prb = 0;
 
@@ -222,6 +262,30 @@ void set_params(const std::string& ant, unsigned fc, double g, unsigned sr, unsi
       frequency, bandwidth, sample_rate, gain, antenna);
 
   restart = true;
+}
+
+/**
+ * Switch to a named frequency-scan preset and (re)start the search from its beginning.
+ * Used by the RESTful API handler to let the WUI trigger a scan without a restart.
+ *
+ * @param mode Preset name: "TV8", "TV6", "TV7", or "LTE"
+ * @return true if mode was recognised and the scan was (re)started
+ */
+bool set_scan_mode(const std::string& mode) { //NOLINT
+  ScanPreset preset;
+  if (!lookup_scan_preset(mode, preset)) {
+    spdlog::warn("RESTful API requested unknown scan mode: {}", mode);
+    return false;
+  }
+  frequency = preset.freq;
+  frequency_step = preset.step_hz;
+  number_of_step = preset.n_steps;
+  start_frequency = frequency;
+  step = 0;
+  restart = true;
+  spdlog::info("RESTful API requesting scan mode {}: frequency={} MHz, frequency_step={} MHz x{}",
+      preset.label, frequency / 1e6, frequency_step / 1e6, number_of_step);
+  return true;
 }
 
 /**
@@ -346,44 +410,20 @@ auto main(int argc, char **argv) -> int {
     exit(1);
   }
 
-  /* ALC: Optional frequency stepping for scanning around the configured frequency. */
-  unsigned frequency_step = 1000000; 
-  unsigned number_of_step = 0;
-  //bool use_scan_mode = false;
-  
   // Check if scan mode is specified
   if (arguments.scan_mode != nullptr) {
-    std::string mode_str = arguments.scan_mode;
-    if (mode_str == "TV8") {
-      frequency = 610000000;  // 610 MHz
-      frequency_step = 8000000;  // 8 MHz
-      number_of_step = 10;
-      //use_scan_mode = true;
-      spdlog::info("Using Europe scan mode: frequency=610 MHz, frequency_step=8 MHz");
-    } else if (mode_str == "TV6") {
-      frequency = 605000000;  // 605 MHz
-      frequency_step = 6000000;  // 6 MHz
-      number_of_step = 15;
-      //use_scan_mode = true;
-      spdlog::info("Using America scan mode: frequency=605 MHz, frequency_step=6 MHz");
-    } else if (mode_str == "TV7") {
-      frequency = 613500000;  // 613.5 MHz
-      frequency_step = 7000000;  // 7 MHz
-      number_of_step = 17;
-      //use_scan_mode = true;
-      spdlog::info("Using LTE scan mode: frequency=609.5 MHz, frequency_step=5 MHz");
-    } else if (mode_str == "LTE") {
-      frequency = 609500000;  // 609.5 MHz
-      frequency_step = 5000000;  // 5 MHz
-      number_of_step = 17;
-      //use_scan_mode = true;
-      spdlog::info("Using LTE scan mode: frequency=609.5 MHz, frequency_step=5 MHz");
-    } else {
-      spdlog::error("Unknown scan mode: {}. Valid modes are: Europe, America, LTE", mode_str);
+    ScanPreset preset;
+    if (!lookup_scan_preset(arguments.scan_mode, preset)) {
+      spdlog::error("Unknown scan mode: {}. Valid modes are: TV8, TV6, TV7, LTE", arguments.scan_mode);
       exit(1);
     }
+    frequency = preset.freq;
+    frequency_step = preset.step_hz;
+    number_of_step = preset.n_steps;
+    spdlog::info("Using {} scan mode: frequency={} MHz, frequency_step={} MHz",
+        preset.label, frequency / 1e6, frequency_step / 1e6);
   }
-  
+
   // Only read from config file if scan mode is not being used
   /*
   if (!use_scan_mode) {
@@ -493,7 +533,7 @@ auto main(int argc, char **argv) -> int {
   std::string uri = "http://0.0.0.0:3010/modem-api/";
   cfg.lookupValue("modem.restful_api.uri", uri);
   spdlog::info("Starting RESTful API handler at {}", uri);
-  RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params);
+  RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params, set_scan_mode);
 
   // Initialize one CAS and thread_cnt MBSFN frame processors
   CasFrameProcessor cas_processor(cfg, phy, rlc, rest_handler, rx_channels);
@@ -526,8 +566,8 @@ auto main(int argc, char **argv) -> int {
   state = searching;
 
   // Start the main processing loop
-  unsigned start_frequency = frequency;  // Remember the frequency for restart scan -  ALC
-  unsigned step = 0;  // number of step for search frequency - ALC
+  start_frequency = frequency;  // Remember the frequency for restart scan -  ALC
+  step = 0;  // number of step for search frequency - ALC
   unsigned sync_fail_count = 0;   // consecutive MIB sync failures in syncing state - ALC
   unsigned search_fail_count = 0; // consecutive cell_search() failures in searching state - ALC
   unsigned max_sync_fails = 5;    // max failures before forcing a frequency scan restart - ALC

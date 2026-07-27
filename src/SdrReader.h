@@ -121,6 +121,11 @@ public:
     std::string get_antenna() { return _antenna; }
 
     /**
+     * Get the SDR hardware name (e.g. "bladeRF")
+     */
+    std::string get_hw_name() { return _hw_name; }
+
+    /**
      * Get RSSI estimate (disabled at the moment)
      */
     uint32_t rssi() { return _rssi; }
@@ -166,6 +171,7 @@ public:
     double _min_gain;
     double _max_gain;
     std::string _antenna;
+    std::string _hw_name;
 
     srsran_filesource_t file_source;
     srsran_filesink_t file_sink;

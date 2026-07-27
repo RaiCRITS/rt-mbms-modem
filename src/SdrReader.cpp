@@ -201,6 +201,7 @@ auto SdrReader::tune(uint32_t frequency, uint32_t sample_rate,
     set_sample_rate(sample_rate, ch);
   }
 
+  _hw_name = sdr->getHardwareKey();
   _frequency = sdr->getFrequency( SOAPY_SDR_RX, 0);
   _filterBw = static_cast<unsigned>(sdr->getBandwidth( SOAPY_SDR_RX, 0));
   _sampleRate = sdr->getSampleRate( SOAPY_SDR_RX, 0);
