@@ -594,7 +594,7 @@ auto main(int argc, char **argv) -> int {
         // A cell has been found. We now know the required number of PRB = bandwidth of the carrier. Set the approproiate
         // sample rate...
         spdlog::info("Cell found at frequency {} MHz", frequency / 1e6);
-        
+        ok proviamo
         // Write the discovered frequency to the configuration file
         write_frequency_to_config(arguments.config_file, frequency);
         
