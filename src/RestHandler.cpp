@@ -273,39 +273,45 @@ void RestHandler::put(http_request message) {
     reply_cors(message, status_codes::NotFound);
   } else {
     if (paths[0] == "sdr_params") {
-      value answer;
+      // extract_json() is scheduled on cpprestsdk's own task thread pool; blocking here with
+      // .get() (as before) ties up a pool worker waiting for that same pool to run the
+      // continuation. Under load (constant GET polling from the dashboard) this starves the
+      // pool and other requests hang forever waiting for a free worker. Use .then() instead
+      // so this handler never blocks a pool thread.
+      message.extract_json().then([this, message](const value& jval) {
+        value answer;
+        auto f = _sdr.get_frequency();
+        auto g = _sdr.get_gain();
+        auto bw = _sdr.get_filter_bw();
+        auto a = _sdr.get_antenna();
+        auto sr = _sdr.get_sample_rate();
 
-      auto f = _sdr.get_frequency();
-      auto g = _sdr.get_gain();
-      auto bw = _sdr.get_filter_bw();
-      auto a = _sdr.get_antenna();
-      auto sr = _sdr.get_sample_rate();
+        spdlog::debug("Received JSON: {}", jval.serialize());
 
-      const auto & jval = message.extract_json().get();
-      spdlog::debug("Received JSON: {}", jval.serialize());
+        if (jval.has_field("antenna")) {
+          a = jval.at("antenna").as_string();
+        }
+        if (jval.has_field("frequency")) {
+          f = jval.at("frequency").as_integer();
+        }
+        if (jval.has_field("gain")) {
+          g = jval.at("gain").as_double();
+        }
+        _set_params( a, static_cast<unsigned int>(f), g, static_cast<unsigned int>(sr), bw);
 
-      if (jval.has_field("antenna")) {
-        a = jval.at("antenna").as_string();
-      }
-      if (jval.has_field("frequency")) {
-        f = jval.at("frequency").as_integer();
-      }
-      if (jval.has_field("gain")) {
-        g = jval.at("gain").as_double();
-      }
-      _set_params( a, static_cast<unsigned int>(f), g, static_cast<unsigned int>(sr), bw);
-
-      reply_cors(message, status_codes::OK, answer);
+        reply_cors(message, status_codes::OK, answer);
+      });
     } else if (paths[0] == "scan_mode") {
-      const auto & jval = message.extract_json().get();
-      spdlog::debug("Received JSON: {}", jval.serialize());
+      message.extract_json().then([this, message](const value& jval) {
+        spdlog::debug("Received JSON: {}", jval.serialize());
 
-      if (!jval.has_field("mode") || !_set_scan_mode(jval.at("mode").as_string())) {
-        reply_cors(message, status_codes::BadRequest);
-      } else {
-        _state = searching;
-        reply_cors(message, status_codes::OK);
-      }
+        if (!jval.has_field("mode") || !_set_scan_mode(jval.at("mode").as_string())) {
+          reply_cors(message, status_codes::BadRequest);
+        } else {
+          _state = searching;
+          reply_cors(message, status_codes::OK);
+        }
+      });
     } else if (paths[0] == "restart") {
       reply_cors(message, status_codes::OK);
       spdlog::warn("Restart requested via REST API. Exiting, relying on systemd Restart=always to relaunch.");
