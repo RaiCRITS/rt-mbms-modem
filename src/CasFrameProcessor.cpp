@@ -87,6 +87,16 @@ void CasFrameProcessor::set_cell(srsran_cell_t cell) {
 }
 
 auto CasFrameProcessor::process(uint32_t tti) -> bool {
+  auto start = std::chrono::steady_clock::now();
+  struct TimingGuard {
+    RestHandler& rest;
+    std::chrono::steady_clock::time_point start;
+    ~TimingGuard() {
+      auto us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+      rest.cas_frame_time_us.store(static_cast<uint32_t>(us));
+    }
+  } timing_guard{_rest, start};
+
   _sf_cfg.tti = tti;
   _sf_cfg.cfi = _cell.semi_static_cfi ? _cell.semi_static_cfi : 0;
   _sf_cfg.sf_type = SRSRAN_SF_NORM;

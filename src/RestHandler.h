@@ -126,6 +126,11 @@ class RestHandler {
      */
     std::atomic<uint32_t> mbsfn_frame_time_us{0};
 
+    /**
+     *  Processing time of the last CAS frame (microseconds)
+     */
+    std::atomic<uint32_t> cas_frame_time_us{0};
+
   private:
     std::vector<float>  _cinr_db;
     void get(web::http::http_request message);

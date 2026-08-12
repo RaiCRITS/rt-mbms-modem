@@ -147,6 +147,7 @@ void RestHandler::get(http_request message) {
       state["cinr_db"] = value(cinr_db());
       state["subcarrier_spacing"] = value(_phy.mbsfn_subcarrier_spacing_khz());
       state["mbsfn_frame_time_us"] = value(mbsfn_frame_time_us.load());
+      state["cas_frame_time_us"] = value(cas_frame_time_us.load());
       reply_cors(message, status_codes::OK, state);
     } else if (paths[0] == "sdr_params") {
       value sdr = value::object();
