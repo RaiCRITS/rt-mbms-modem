@@ -87,7 +87,9 @@ class RestHandler {
         };
         bool present = false;
         int mcs = 0;
-        double ber;
+        double ber = 0;      // no longer measured since the srsLTE -> srsRAN rebase, kept for API compatibility
+        float evm = 0;       // PDSCH only: PMCH does not measure EVM
+        float avg_iterations = 0;
         unsigned total = 1;
         unsigned errors = 0;
       private:
@@ -116,10 +118,17 @@ class RestHandler {
     std::map<uint32_t, ChannelInfo> _mch;
 
     /**
-     *  Current CINR value
+     *  Current CINR value on the CAS
      */
-    float cinr_db() { return _cinr_db.size() ? (std::accumulate(_cinr_db.begin(), _cinr_db.end(), 0) / (_cinr_db.size() * 1.0)) : 0.0; };
+    float cinr_db() { return _cinr_db.load(); }
     void add_cinr_value( float cinr);
+
+    /**
+     *  Current CINR value on the MBSFN channel. Measured separately: the CAS
+     *  can be perfectly readable while the MBSFN carrier is not.
+     */
+    float cinr_mbsfn_db() { return _cinr_mbsfn_db.load(); }
+    void add_cinr_mbsfn_value( float cinr);
 
     /**
      *  Processing time of the last MBSFN frame (microseconds)
@@ -132,7 +141,11 @@ class RestHandler {
     std::atomic<uint32_t> cas_frame_time_us{0};
 
   private:
-    std::vector<float>  _cinr_db;
+    // Exponential moving averages, written by the CAS/MBSFN worker threads and
+    // read from the main and REST threads: atomic, so no container to protect.
+    std::atomic<float> _cinr_db{0};
+    std::atomic<float> _cinr_mbsfn_db{0};
+
     void get(web::http::http_request message);
     void put(web::http::http_request message);
     void options(const web::http::http_request& message);

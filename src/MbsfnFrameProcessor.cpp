@@ -178,11 +178,13 @@ auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
       _rest._mcch.SetData(mch_data());
     }
     _rest._mcch.mcs = static_cast<int>(_pmch_cfg.pdsch_cfg.grant.tb[0].mcs_idx);
+    _rest._mcch.avg_iterations = pmch_dec.avg_iterations_block;
   } else {
     if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) {
       _rest._mch[mch_idx].SetData(mch_data());
     }
     _rest._mch[mch_idx].mcs = static_cast<int>(_pmch_cfg.pdsch_cfg.grant.tb[0].mcs_idx);
+    _rest._mch[mch_idx].avg_iterations = pmch_dec.avg_iterations_block;
     _rest._mch[mch_idx].present = true;
   }
 

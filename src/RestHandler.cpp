@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <cmath>
 
 #include "spdlog/spdlog.h"
 
@@ -145,6 +146,7 @@ void RestHandler::get(http_request message) {
       state["cell_id"] = value(_phy.cell().id);
       state["cfo"] = value(_phy.cfo());
       state["cinr_db"] = value(cinr_db());
+      state["cinr_mbsfn_db"] = value(cinr_mbsfn_db());
       state["subcarrier_spacing"] = value(_phy.mbsfn_subcarrier_spacing_khz());
       state["mbsfn_frame_time_us"] = value(mbsfn_frame_time_us.load());
       state["cas_frame_time_us"] = value(cas_frame_time_us.load());
@@ -171,6 +173,8 @@ void RestHandler::get(http_request message) {
       sdr["bler"] = value(static_cast<float>(_pdsch.errors) /
                                 static_cast<float>(_pdsch.total));
       sdr["ber"] = value(_pdsch.ber);
+      sdr["evm"] = value(_pdsch.evm);
+      sdr["avg_iterations"] = value(_pdsch.avg_iterations);
       sdr["mcs"] = value(_pdsch.mcs);
       sdr["present"] = 1;
       reply_cors(message, status_codes::OK, sdr);
@@ -182,6 +186,7 @@ void RestHandler::get(http_request message) {
       sdr["bler"] = value(static_cast<float>(_mcch.errors) /
                                 static_cast<float>(_mcch.total));
       sdr["ber"] = value(_mcch.ber);
+      sdr["avg_iterations"] = value(_mcch.avg_iterations);
       sdr["mcs"] = value(_mcch.mcs);
       sdr["present"] = 1;
       reply_cors(message, status_codes::OK, sdr);
@@ -212,6 +217,7 @@ void RestHandler::get(http_request message) {
       sdr["bler"] = value(static_cast<float>(_mch[idx].errors) /
                                 static_cast<float>(_mch[idx].total));
       sdr["ber"] = value(_mch[idx].ber);
+      sdr["avg_iterations"] = value(_mch[idx].avg_iterations);
       sdr["mcs"] = value(_mch[idx].mcs);
       sdr["present"] = value(_mch[idx].present);
       reply_cors(message, status_codes::OK, sdr);
@@ -393,9 +399,22 @@ value RestHandler::get_system_status() {
   return status;
 }
 
-void RestHandler::add_cinr_value( float cinr) {
-  if (_cinr_db.size() > CINR_RAVG_CNT) {
-    _cinr_db.erase(_cinr_db.begin());
+// Seed on the first sample: an average starting from zero would need
+// CINR_RAVG_CNT samples to converge again after every resync.
+static void ema_update(std::atomic<float>& avg, float sample) {
+  // The channel estimator reports inf/NaN when it has no noise estimate; a
+  // single such sample would poison the average permanently.
+  if (!std::isfinite(sample)) {
+    return;
   }
-  _cinr_db.push_back(cinr);
+  float prev = avg.load();
+  avg = (prev == 0) ? sample : SRSRAN_VEC_EMA(sample, prev, 1.0F / CINR_RAVG_CNT);
+}
+
+void RestHandler::add_cinr_value( float cinr) {
+  ema_update(_cinr_db, cinr);
+}
+
+void RestHandler::add_cinr_mbsfn_value( float cinr) {
+  ema_update(_cinr_mbsfn_db, cinr);
 }

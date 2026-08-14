@@ -18,6 +18,9 @@
 //
 
 #include "CasFrameProcessor.h"
+
+#include <cmath>
+
 #include "spdlog/spdlog.h"
 
 
@@ -63,7 +66,7 @@ auto CasFrameProcessor::init() -> bool {
 
   _ue_dl_cfg.cfg.pdsch.csi_enable         = true;
   _ue_dl_cfg.cfg.pdsch.max_nof_iterations = 8;
-  _ue_dl_cfg.cfg.pdsch.meas_evm_en        = false;
+  _ue_dl_cfg.cfg.pdsch.meas_evm_en        = true;   // else srsran reports evm as NAN
   _ue_dl_cfg.cfg.pdsch.decoder_type       = SRSRAN_MIMO_DECODER_MMSE;
   _ue_dl_cfg.cfg.pdsch.softbuffers.rx[0] = &_softbuffer;
 
@@ -168,6 +171,9 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
       _rest._pdsch.errors++;
     } else {
       spdlog::debug("Decoded PDSCH");
+      // guard against NAN: it would serialise to invalid JSON on the API
+      _rest._pdsch.evm = std::isfinite(pdsch_res[0].evm) ? pdsch_res[0].evm : 0;
+      _rest._pdsch.avg_iterations = pdsch_res[0].avg_iterations_block;
       for (int i = 0; i < SRSRAN_MAX_CODEWORDS; i++) {
         // .. and pass received PDUs to RLC for further processing
         if (pdsch_cfg->grant.tb[i].enabled && pdsch_res[i].crc) {

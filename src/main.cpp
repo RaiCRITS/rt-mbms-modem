@@ -787,8 +787,11 @@ auto main(int argc, char **argv) -> int {
                 mbsfn_processors[mb_idx]->set_cell(cell);
                 mbsfn_processors[mb_idx]->configure_mbsfn(phy.mbsfn_area_id(), scs);
               }
-              pool.push([ObjectPtr = mbsfn_processors[mb_idx], tti] {  // ALC assegna gli MBSFN  al thread pool  
-                ObjectPtr->process(tti);
+              pool.push([ObjectPtr = mbsfn_processors[mb_idx], tti, &rest_handler] {  // ALC assegna gli MBSFN  al thread pool
+                // process() returns 0 for MCCH, 1 for MCH, -1 if nothing was decoded
+                if (ObjectPtr->process(tti) >= 0) {
+                  rest_handler.add_cinr_mbsfn_value(ObjectPtr->cinr_db());
+                }
               });
             } else {
               // Nothing to do yet, we lack the data from SIB1/SIB13
@@ -817,21 +820,26 @@ auto main(int argc, char **argv) -> int {
           // Collect the relevant info and write it out.
           std::vector<std::string> cols;
 
-          spdlog::info("CINR {:.2f} dB", rest_handler.cinr_db() );
+          // MBSFN CINR not logged: srsran cannot estimate MBSFN noise with the
+          // current chest config, so it is always 0. See TODO_srsran_patches.md
+          spdlog::info("CINR {:.2f} dB", rest_handler.cinr_db());
           cols.push_back(std::to_string(rest_handler.cinr_db()));
 
-          spdlog::info("PDSCH: MCS {}, BLER {}, BER {}",
+          spdlog::info("PDSCH: MCS {}, BLER {}, BER {}, EVM {:.2f}, n_iter {:.1f}",
               rest_handler._pdsch.mcs,
               ((rest_handler._pdsch.errors * 1.0) / (rest_handler._pdsch.total * 1.0)),
-              rest_handler._pdsch.ber);
+              rest_handler._pdsch.ber,
+              rest_handler._pdsch.evm,
+              rest_handler._pdsch.avg_iterations);
           cols.push_back(std::to_string(rest_handler._pdsch.mcs));
           cols.push_back(std::to_string(((rest_handler._pdsch.errors * 1.0) / (rest_handler._pdsch.total * 1.0))));
           cols.push_back(std::to_string(rest_handler._pdsch.ber));
 
-          spdlog::info("MCCH: MCS {}, BLER {}, BER {}",
+          spdlog::info("MCCH: MCS {}, BLER {}, BER {}, n_iter {:.1f}",
               rest_handler._mcch.mcs,
               ((rest_handler._mcch.errors * 1.0) / (rest_handler._mcch.total * 1.0)),
-              rest_handler._mcch.ber);
+              rest_handler._mcch.ber,
+              rest_handler._mcch.avg_iterations);
 
           cols.push_back(std::to_string(rest_handler._mcch.mcs));
           cols.push_back(std::to_string(((rest_handler._mcch.errors * 1.0) / (rest_handler._mcch.total * 1.0))));
@@ -840,11 +848,12 @@ auto main(int argc, char **argv) -> int {
           auto mch_info = phy.mch_info();
           int mch_idx = 0;
           std::for_each(std::begin(mch_info), std::end(mch_info), [&cols, &mch_idx, &rest_handler](Phy::mch_info_t const& mch) {
-              spdlog::info("MCH {}: MCS {}, BLER {}, BER {}",
+              spdlog::info("MCH {}: MCS {}, BLER {}, BER {}, n_iter {:.1f}",
                   mch_idx,
                   mch.mcs,
                   (rest_handler._mch[mch_idx].errors * 1.0) / (rest_handler._mch[mch_idx].total * 1.0),
-                  rest_handler._mch[mch_idx].ber);
+                  rest_handler._mch[mch_idx].ber,
+                  rest_handler._mch[mch_idx].avg_iterations);
               cols.push_back(std::to_string(mch_idx));
               cols.push_back(std::to_string(mch.mcs));
               cols.push_back(std::to_string((rest_handler._mch[mch_idx].errors * 1.0) / (rest_handler._mch[mch_idx].total * 1.0)));
