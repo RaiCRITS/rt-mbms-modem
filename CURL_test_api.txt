@@ -17,3 +17,9 @@ curl http://127.0.0.1:3010/modem-api/mch_status/0
 curl -X PUT http://127.0.0.1:3010/modem-api/sdr_params \
   -H "Content-Type: application/json" \
   -d '{"frequency": 1452500000, "gain": 20.5, "anten
+# Set CE weighting / LLR multiply (persisted to config, takes effect after restart)
+curl -X PUT http://127.0.0.1:3010/modem-api/ce_enable \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": 1}'
+# Active value is reported by GET /status as "ce_enable"; apply with:
+curl -X PUT http://127.0.0.1:3010/modem-api/restart

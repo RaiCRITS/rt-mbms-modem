@@ -20,6 +20,7 @@
 #include "CasFrameProcessor.h"
 
 #include <cmath>
+#include <cstring>
 
 #include "spdlog/spdlog.h"
 
@@ -53,7 +54,7 @@ auto CasFrameProcessor::init() -> bool {
   }
 
   srsran_chest_dl_cfg_t* chest_cfg = &_ue_dl_cfg.chest_cfg;
-  bzero(chest_cfg, sizeof(srsran_chest_dl_cfg_t));
+  memset(chest_cfg, 0, sizeof(srsran_chest_dl_cfg_t));
   chest_cfg->filter_coef[0] = 4;
   chest_cfg->filter_coef[1] = 1.0f;
   chest_cfg->filter_type = SRSRAN_CHEST_FILTER_GAUSS;
@@ -127,7 +128,7 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
   int nof_grants = srsran_ue_dl_find_dl_dci(&_ue_dl, &_sf_cfg, &_ue_dl_cfg, _cell.mbms_dedicated ? SRSRAN_SIRNTI_MBMS_DEDICATED : SRSRAN_SIRNTI, dci);
 
   if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
-      _rest._ce_values = ce_values();
+      _rest.set_ce_values(ce_values());
   }
 
   for (int k = 0; k < nof_grants; k++) {

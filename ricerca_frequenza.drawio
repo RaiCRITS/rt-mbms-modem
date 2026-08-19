@@ -1,0 +1,162 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="Ricerca in frequenza" id="freq-scan-modem">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1280" pageHeight="1080" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="s0" value="Avvio: frequency da config (center_frequency_hz) oppure preset scan -S (TV8 / TV6 / TV7 / LTE)" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="320" y="40" width="280" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="start_frequency = frequency, step = 0&#10;tune SDR @ search_sample_rate (default 7.68 MS/s)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="160" width="280" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="search" value="SEARCHING&#10;se restart: stop / tune(frequency, sample_rate) / start&#10;svuota ringbuffer, cell_search()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="320" y="270" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="dfound" value="Cella trovata?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="390" y="410" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="fail" value="search_fail_count++&#10;ogni 5 fallimenti di fila: hard reset SDR (stop, 500 ms, tune, start)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="400" width="230" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="dstep" value="step &lt; number_of_step?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="75" y="540" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="nextstep" value="step++&#10;frequency = start_frequency + step × frequency_step&#10;stop / clear buffer / tune / start" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="670" width="230" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="exhausted" value="Scan esaurito:&#10;frequency = start_frequency, sample_rate = search rate&#10;restart = true (retune al giro dopo), sleep 1 s" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="670" width="280" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="foundbox" value="Salva frequency nel file di config.&#10;Se i PRB del MIB richiedono un rate diverso: stop / tune / start al rate della cella" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="680" y="400" width="260" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="sync" value="SYNCING&#10;fino a 200 tentativi di synchronize_subframe() (decodifica MIB al rate target)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="680" y="540" width="260" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="dsync" value="Sync OK?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="740" y="660" width="140" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="syncfail" value="sync_fail_count++, sample_rate = search rate, restart = true&#10;al 5° fallimento: step = 0, frequency = start_frequency (lo scan riparte)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="850" width="280" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="proc" value="PROCESSING&#10;decodifica CAS + MBSFN a ogni TTI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="680" y="790" width="260" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lost" value="Perdita di sync oppure restart da API:&#10;sample_rate = search rate, stop / tune / start, reset RRC e PHY" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="680" y="920" width="260" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="prbext" value="PRB extension:&#10;area MBSFN più larga del CAS → tune al rate MBSFN" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="990" y="660" width="230" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="api" value="REST API&#10;PUT /scan_mode: preset, step = 0, restart = true, stato = searching&#10;PUT /sdr_params: nuovi parametri, restart = true" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="150" width="230" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="s0" target="s1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="s1" target="search">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="search" target="dfound">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="dfound" target="fail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="fail" target="dstep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="sì" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="dstep" target="nextstep">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="nextstep" target="search">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="20" y="715" />
+              <mxPoint x="20" y="315" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e8" value="no (scan attivo)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0.5;entryY=0;" edge="1" parent="1" source="dstep" target="exhausted">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="460" y="580" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=1;entryY=0.66;" edge="1" parent="1" source="exhausted" target="search">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="630" y="715" />
+              <mxPoint x="630" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e10" value="sì" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="dfound" target="foundbox">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="foundbox" target="sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="sync" target="dsync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" value="no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="dsync" target="syncfail">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="660" y="695" />
+              <mxPoint x="660" y="900" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.66;" edge="1" parent="1" source="syncfail" target="search">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="305" y="900" />
+              <mxPoint x="305" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e15" value="sì" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="dsync" target="proc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" value="sync perso / restart" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="proc" target="lost">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0;exitY=0.5;entryX=0;entryY=0.33;" edge="1" parent="1" source="lost" target="search">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="290" y="965" />
+              <mxPoint x="290" y="300" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e18" value="MBSFN più largo" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=1;exitY=0.5;entryX=0.5;entryY=1;" edge="1" parent="1" source="proc" target="prbext">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1105" y="830" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=0;entryX=1;entryY=0.5;" edge="1" parent="1" source="prbext" target="sync">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1105" y="580" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.2;" edge="1" parent="1" source="api" target="search">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="200" />
+              <mxPoint x="300" y="288" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -141,7 +141,14 @@ auto Phy::cell_search() -> bool {
   ret = srsran_ue_mib_sync_decode_prb(&_mib_sync, 40, bch_payload.data(), &new_cell.nof_ports, &sfn_offset, _cs_nof_prb);
 
   if (!ret) { // MIB-MBMS failed, try to decode regular MIB
-    init();
+    // init() rialloca tutto: senza le free si perdono le allocazioni precedenti a ogni fallback
+    srsran_ue_cellsearch_free(&_cell_search);
+    srsran_ue_sync_free(&_ue_sync);
+    srsran_ue_mib_sync_free(&_mib_sync);
+    srsran_ue_mib_free(&_mib);
+    if (!init()) {
+      return false;
+    }
     new_cell.mbms_dedicated = false;
     if (srsran_ue_mib_sync_set_cell_prb(&_mib_sync, new_cell, _cs_nof_prb) != 0) {
       spdlog::error("Phy: Error setting UE MIB sync cell");

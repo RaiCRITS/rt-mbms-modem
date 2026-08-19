@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <thread>
@@ -161,7 +162,7 @@ public:
     std::unique_ptr<MultichannelRingbuffer> _buffer;
 
     std::thread _readerThread;
-    bool _running;
+    std::atomic<bool> _running{false};  // flag di stop letto dal reader thread, scritto dal main
 
     double _sampleRate;
     double _frequency;

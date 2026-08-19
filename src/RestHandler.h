@@ -20,8 +20,10 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <array>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <atomic>
 #include <libconfig.h++>
 
@@ -56,6 +58,13 @@ class RestHandler {
     typedef std::function<bool(const std::string& mode)> set_scan_mode_t;
 
     /**
+     *  Definition of the callback for persisting the ce_enable flag (channel estimate
+     *  weighting in MBSFN soft demodulation) to the config file. Takes effect at the
+     *  next modem restart. Returns false if the config file could not be written.
+     */
+    typedef std::function<bool(bool enabled)> set_ce_enable_t;
+
+    /**
      *  Default constructor.
      *
      *  @param cfg Config singleton reference
@@ -65,8 +74,9 @@ class RestHandler {
      *  @param set_params Set parameters callback
      *  @param set_scan_mode Set scan mode preset callback
      */
-    RestHandler(const libconfig::Config& cfg, const std::string& url, state_t& state,
-        SdrReader& sdr, Phy& phy, set_params_t set_params, set_scan_mode_t set_scan_mode);
+    RestHandler(const libconfig::Config& cfg, const std::string& url, std::atomic<state_t>& state,
+        SdrReader& sdr, Phy& phy, set_params_t set_params, set_scan_mode_t set_scan_mode,
+        set_ce_enable_t set_ce_enable);
     /**
      *  Default destructor.
      */
@@ -98,9 +108,17 @@ class RestHandler {
     };
 
     /**
-     *  Time domain subcarrier CE values
+     *  Time domain subcarrier CE values. Guarded by a mutex: written by the CAS
+     *  worker thread, read by the REST threads.
      */
-    std::vector<uint8_t> _ce_values = {};
+    void set_ce_values(std::vector<uint8_t> v) {
+      std::lock_guard<std::mutex> lock(_ce_values_mutex);
+      _ce_values = std::move(v);
+    }
+    std::vector<uint8_t> get_ce_values() {
+      std::lock_guard<std::mutex> lock(_ce_values_mutex);
+      return _ce_values;
+    }
 
     /**
      *  RX info for PDSCH
@@ -113,9 +131,11 @@ class RestHandler {
     ChannelInfo _mcch;
 
     /**
-     *  RX info for MCHs
+     *  RX info for MCHs. Dimensione fissa (max 15 PMCH per area MBSFN, TS 36.331):
+     *  niente inserimenti dinamici, quindi worker e thread REST non possono
+     *  corrompere la struttura del container accedendovi in parallelo.
      */
-    std::map<uint32_t, ChannelInfo> _mch;
+    std::array<ChannelInfo, 16> _mch;
 
     /**
      *  Current CINR value on the CAS
@@ -140,6 +160,13 @@ class RestHandler {
      */
     std::atomic<uint32_t> cas_frame_time_us{0};
 
+    /**
+     *  ce_enable value currently active in the MBSFN processors (config + CLI override),
+     *  set once at startup and exposed on GET /status. A differing value written via
+     *  PUT /ce_enable becomes active only after a restart.
+     */
+    bool _ce_enabled_active = false;
+
   private:
     // Exponential moving averages, written by the CAS/MBSFN worker threads and
     // read from the main and REST threads: atomic, so no container to protect.
@@ -163,12 +190,16 @@ class RestHandler {
 
     std::unique_ptr<web::http::experimental::listener::http_listener> _listener;
 
-    state_t& _state;
+    std::vector<uint8_t> _ce_values = {};
+    std::mutex _ce_values_mutex;
+
+    std::atomic<state_t>& _state;
     SdrReader& _sdr;
     Phy& _phy;
 
     set_params_t _set_params;
     set_scan_mode_t _set_scan_mode;
+    set_ce_enable_t _set_ce_enable;
 
     bool _require_bearer_token = false;
     std::string _api_key;

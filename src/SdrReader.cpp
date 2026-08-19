@@ -36,6 +36,7 @@ SdrReader:: ~SdrReader() {
       stop();
     } catch (...) {
       // Destructor must not throw
+      spdlog::warn("Exception while stopping SdrReader during destruction");
     }
   }
   if (_sdr != nullptr) {
@@ -233,6 +234,7 @@ void SdrReader::start() {
     {
       spdlog::error("Failed to set up RX stream");
       SoapySDR::Device::unmake( sdr );
+      _sdr = nullptr;  // il device è stato distrutto: senza questo, stop()/tune()/distruttore farebbero use-after-free
       return ;
     }
     sdr->activateStream( (SoapySDR::Stream*)_stream, 0, 0, 0);

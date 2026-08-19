@@ -30,8 +30,10 @@
 
 #include <argp.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <mutex>
 #include <libconfig.h++>
 
 #include "CasFrameProcessor.h"
@@ -181,20 +183,28 @@ void print_version(FILE *stream, struct argp_state * /*state*/) {
 
 static Config cfg;  /**< Global configuration object. */
 
-static unsigned sample_rate = 7680000;  /**< Sample rate of the SDR */
-static unsigned search_sample_rate = 7680000;  /**< Sample rate of the SDR */
-static unsigned frequency = 667000000;  /**< Center freqeuncy the SDR is tuned to */
-static uint32_t bandwidth = 10000000;   /**< Low pass filter bandwidth for the SDR */
-static double gain = 0.9;               /**< Overall system gain for the SDR */
-static std::string antenna = "LNAW";    /**< Antenna input to be used */
+/* Questi parametri sono scritti dal thread REST (set_params/set_scan_mode) e letti
+ * dal main loop: atomici per evitare race. antenna è una std::string e va protetta
+ * con un mutex; leggerla sempre tramite get_antenna(). */
+static std::atomic<unsigned> sample_rate{7680000};  /**< Sample rate of the SDR */
+static unsigned search_sample_rate = 7680000;  /**< Sample rate per la ricerca (scritto solo all'avvio) */
+static std::atomic<unsigned> frequency{667000000};  /**< Center freqeuncy the SDR is tuned to */
+static std::atomic<uint32_t> bandwidth{10000000};   /**< Low pass filter bandwidth for the SDR */
+static std::atomic<double> gain{0.9};               /**< Overall system gain for the SDR */
+static std::mutex antenna_mutex;
+static std::string antenna = "LNAW";    /**< Antenna input to be used. Guarded by antenna_mutex */
+static auto get_antenna() -> std::string {
+  std::lock_guard<std::mutex> lock(antenna_mutex);
+  return antenna;
+}
 static bool use_agc = false;
 
 /* Frequency-step scanning around the configured/preset frequency. Global (not local to
  * main()) so the RESTful API can also change scan mode at runtime, not just at startup. */
-static unsigned frequency_step = 1000000;
-static unsigned number_of_step = 0;
-static unsigned start_frequency = frequency;  /**< Frequency to return to when a scan restarts */
-static unsigned step = 0;                     /**< Current frequency-step index of the scan */
+static std::atomic<unsigned> frequency_step{1000000};
+static std::atomic<unsigned> number_of_step{0};
+static std::atomic<unsigned> start_frequency{frequency.load()};  /**< Frequency to return to when a scan restarts */
+static std::atomic<unsigned> step{0};         /**< Current frequency-step index of the scan */
 
 /**
  * One named frequency-scan preset (e.g. "TV8"): starting frequency, step size, and step count.
@@ -214,7 +224,7 @@ struct ScanPreset {
  * @param out Filled with the preset's parameters on success
  * @return true if mode was recognised
  */
-static bool lookup_scan_preset(const std::string& mode, ScanPreset& out) {
+static auto lookup_scan_preset(const std::string& mode, ScanPreset& out) -> bool {
   if (mode == "TV8") {
     out = {610000000, 8000000, 10, "TV8"};
   } else if (mode == "TV6") {
@@ -240,7 +250,7 @@ static unsigned cas_nof_prb = 0;
  * @see gain
  * @see antenna
  */
-static bool restart = false;
+static std::atomic<bool> restart{false};
 
 /**
  * Set new SDR parameters and initialize resynchronisation. This function is used by the RESTful API handler
@@ -256,10 +266,13 @@ void set_params(const std::string& ant, unsigned fc, double g, unsigned sr, unsi
   sample_rate = sr;
   frequency = fc;
   bandwidth = bw;
-  antenna = ant;
+  {
+    std::lock_guard<std::mutex> lock(antenna_mutex);
+    antenna = ant;
+  }
   gain = g;
   spdlog::info("RESTful API requesting new parameters: fc {}, bw {}, rate {}, gain {}, antenna {}",
-      frequency, bandwidth, sample_rate, gain, antenna);
+      fc, bw, sr, g, ant);
 
   restart = true;
 }
@@ -280,11 +293,11 @@ bool set_scan_mode(const std::string& mode) { //NOLINT
   frequency = preset.freq;
   frequency_step = preset.step_hz;
   number_of_step = preset.n_steps;
-  start_frequency = frequency;
+  start_frequency = preset.freq;
   step = 0;
   restart = true;
   spdlog::info("RESTful API requesting scan mode {}: frequency={} MHz, frequency_step={} MHz x{}",
-      preset.label, frequency / 1e6, frequency_step / 1e6, number_of_step);
+      preset.label, preset.freq / 1e6, preset.step_hz / 1e6, preset.n_steps);
   return true;
 }
 
@@ -327,8 +340,35 @@ void write_frequency_to_config(const char* config_file, unsigned freq) {
 }
 
 /**
+ * Writes the ce_enable flag to the configuration file. Used by the RESTful API:
+ * takes effect at the next modem restart, when the MBSFN processors read
+ * modem.phy.ce_enable (unless overridden by the --ce command line flag).
+ *
+ * @param config_file Path to the configuration file
+ * @param enabled Whether channel estimate weighting should be enabled
+ * @return true if the config file was updated
+ */
+auto write_ce_to_config(const char* config_file, bool enabled) -> bool {
+  try {
+    Config cfg;
+    cfg.readFile(config_file);
+    libconfig::Setting& phy = cfg.getRoot()["modem"]["phy"];
+    if (phy.exists("ce_enable")) {
+      phy.remove("ce_enable");  // remove+add: gestisce anche un eventuale tipo diverso preesistente
+    }
+    phy.add("ce_enable", libconfig::Setting::TypeBoolean) = enabled;
+    cfg.writeFile(config_file);
+    spdlog::info("Written ce_enable = {} to config file {}. Takes effect at next restart.", enabled, config_file);
+    return true;
+  } catch(const std::exception &ex) {
+    spdlog::warn("Error while writing ce_enable to config: {}", ex.what());
+    return false;
+  }
+}
+
+/**
  *  Main entry point for the program.
- *  
+ *
  * @param argc  Command line agument count
  * @param argv  Command line arguments
  * @return 0 on clean exit, -1 on failure
@@ -390,10 +430,11 @@ auto main(int argc, char **argv) -> int {
   }
   sample_rate = search_sample_rate;
 
-  if (!cfg.lookupValue("modem.sdr.filter_bandwidth_hz", bandwidth)) {
-    bandwidth = 10000000;  // Default LPF bandwidth (10 MHz)
+  uint32_t cfg_bandwidth = 10000000;  // Default LPF bandwidth (10 MHz)
+  if (!cfg.lookupValue("modem.sdr.filter_bandwidth_hz", cfg_bandwidth)) {
     spdlog::warn("modem.sdr.filter_bandwidth_hz not found in config. Using default: 10000000 Hz");
   }
+  bandwidth = cfg_bandwidth;
 
   unsigned long long center_frequency = frequency;
   if (!cfg.lookupValue("modem.sdr.center_frequency_hz", center_frequency)) {
@@ -445,12 +486,14 @@ auto main(int argc, char **argv) -> int {
   }*/
   /* --- ALC: Optional frequency stepping for scanning around the configured frequency. */
 
-  cfg.lookupValue("modem.sdr.normalized_gain", gain);
-  cfg.lookupValue("modem.sdr.antenna", antenna);
+  double cfg_gain = gain;
+  cfg.lookupValue("modem.sdr.normalized_gain", cfg_gain);
+  gain = cfg_gain;
+  cfg.lookupValue("modem.sdr.antenna", antenna);  // pre-thread REST: accesso diretto sicuro
   cfg.lookupValue("modem.sdr.use_agc", use_agc);
 
   
-  if (!sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc)) {
+  if (!sdr.tune(frequency, sample_rate, bandwidth, gain, get_antenna(), use_agc)) {
     spdlog::error("Failed to set initial center frequency. Exiting.");
     exit(1);
   }
@@ -527,13 +570,22 @@ auto main(int argc, char **argv) -> int {
 
 
 
-  state_t state = searching;
+  std::atomic<state_t> state{searching};
 
   // Create the RESTful API handler
   std::string uri = "http://0.0.0.0:3010/modem-api/";
   cfg.lookupValue("modem.restful_api.uri", uri);
   spdlog::info("Starting RESTful API handler at {}", uri);
-  RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params, set_scan_mode);
+  RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params, set_scan_mode,
+      [config_file = arguments.config_file](bool enabled) { return write_ce_to_config(config_file, enabled); });
+
+  // Valore effettivo di ce_enable (config + eventuale override CLI), esposto su GET /status
+  bool ce_active = false;
+  cfg.lookupValue("modem.phy.ce_enable", ce_active);
+  if (arguments.ce_enabled != -1) {
+    ce_active = arguments.ce_enabled != 0;
+  }
+  rest_handler._ce_enabled_active = ce_active;
 
   // Initialize one CAS and thread_cnt MBSFN frame processors
   CasFrameProcessor cas_processor(cfg, phy, rlc, rest_handler, rx_channels);
@@ -566,7 +618,7 @@ auto main(int argc, char **argv) -> int {
   state = searching;
 
   // Start the main processing loop
-  start_frequency = frequency;  // Remember the frequency for restart scan -  ALC
+  start_frequency = frequency.load();  // Remember the frequency for restart scan -  ALC
   step = 0;  // number of step for search frequency - ALC
   unsigned sync_fail_count = 0;   // consecutive MIB sync failures in syncing state - ALC
   unsigned search_fail_count = 0; // consecutive cell_search() failures in searching state - ALC
@@ -576,7 +628,7 @@ auto main(int argc, char **argv) -> int {
     if (state == searching) {
       if (restart) {
         sdr.stop();
-        sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
+        sdr.tune(frequency, sample_rate, bandwidth, gain, get_antenna(), use_agc);
         sdr.start();
       }
 
@@ -616,7 +668,7 @@ auto main(int argc, char **argv) -> int {
             sdr.stop();
 
             bandwidth = (cas_nof_prb * 200000);
-            sdr.tune(frequency, new_srate, bandwidth, gain, antenna, use_agc);
+            sdr.tune(frequency, new_srate, bandwidth, gain, get_antenna(), use_agc);
 
             sdr.start();
           }
@@ -632,7 +684,7 @@ auto main(int argc, char **argv) -> int {
           search_fail_count = 0;
           sdr.stop();
           std::this_thread::sleep_for(std::chrono::milliseconds(500));
-          sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
+          sdr.tune(frequency, sample_rate, bandwidth, gain, get_antenna(), use_agc);
           sdr.start();
           std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
@@ -640,12 +692,12 @@ auto main(int argc, char **argv) -> int {
         if (step < number_of_step) {
           step++;
           frequency = start_frequency + step * frequency_step;
-          spdlog::info("Trying frequency {} MHz (step {}/{})", frequency / 1000000.0, step + 1, number_of_step);
+          spdlog::info("Trying frequency {} MHz (step {}/{})", frequency / 1000000.0, step + 1, number_of_step.load());
           // (re)tune SDR to the candidate frequency for this step
           sdr.stop();
           sdr.clear_buffer();
-          if (!sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc)) {
-            spdlog::warn("Tuning to {} Hz failed; continuing to next step.", frequency);
+          if (!sdr.tune(frequency, sample_rate, bandwidth, gain, get_antenna(), use_agc)) {
+            spdlog::warn("Tuning to {} Hz failed; continuing to next step.", frequency.load());
             sdr.start();
             continue;
           }
@@ -653,8 +705,9 @@ auto main(int argc, char **argv) -> int {
         } else {
           if (step == number_of_step && number_of_step > 0) {  //if the frequency scan is active (number_of_step > 0) but max number of step is reached
             spdlog::info("Nothing found during the scan, restart at frequency {} MHz)", start_frequency / 1000000.0);
-            frequency = start_frequency; //return to original frequency - ALC
+            frequency = start_frequency.load(); //return to original frequency - ALC
             sample_rate = search_sample_rate;  // sample rate for searching
+            restart = true;  // senza questo l'SDR resta sintonizzato sull'ultimo step dello scan
           } 
           sleep(1);
         }
@@ -670,19 +723,17 @@ auto main(int argc, char **argv) -> int {
         sfn_sync = phy.synchronize_subframe();
       }
 
-      if (max_frames == 0 && !sfn_sync) {
+      if (!sfn_sync) {
         sync_fail_count++;
         spdlog::warn("Synchronization failed ({}/{}). Going back to search state.", sync_fail_count, max_sync_fails);
         if (sync_fail_count >= max_sync_fails) {
           spdlog::warn("Too many consecutive sync failures — forcing frequency scan restart.");
           sync_fail_count = 0;
           step = 0;
-          frequency = start_frequency;
-          sample_rate = search_sample_rate;
-          sdr.stop();
-          sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
-          sdr.start();
+          frequency = start_frequency.load();
         }
+        sample_rate = search_sample_rate;  // cell_search lavora al search rate, non al rate della cella
+        restart = true;  // stop/tune/start avviene nel blocco restart dello stato searching
         state = searching;
         sleep(1);
       }
@@ -694,10 +745,6 @@ auto main(int argc, char **argv) -> int {
 
         // Set the cell parameters in the CAS processor
         cas_processor.set_cell(phy.cell());
-
-        for (auto i = 0U; i < thread_cnt; i++) {
-          mbsfn_processors[i]->unlock();
-        }
 
         // Get the initial TTI / subframe ID (= system frame number * 10 + subframe number)
         tti = phy.tti();
@@ -719,7 +766,8 @@ auto main(int argc, char **argv) -> int {
         if (phy.is_cas_subframe(tti)) {
           // Get the samples from the SDR interface, hand them to a CAS processor, and start it
           // on a thread from the pool.
-          if (!restart && phy.get_next_frame(cas_processor.rx_buffer(), cas_processor.rx_buffer_size())) {
+          bool was_restart = restart;
+          if (!was_restart && phy.get_next_frame(cas_processor.rx_buffer(), cas_processor.rx_buffer_size())) {
             spdlog::debug("sending tti {} to regular processor", tti); 
             pool.push([ObjectPtr = &cas_processor, tti, &rest_handler] {  // ALC è una lambda che cattura un puntatore alla cas_processor e lo invia a un thread 
                 if (ObjectPtr->process(tti)) {
@@ -747,7 +795,7 @@ auto main(int argc, char **argv) -> int {
                 spdlog::info("Setting sample rate {} Mhz for MBSFN with {} PRB / {} Mhz channel width", new_srate/1000000.0, mbsfn_nof_prb,
                     mbsfn_nof_prb * 0.2);
                 sdr.stop();
-                sdr.tune(frequency, new_srate, bandwidth, gain, antenna, use_agc);
+                sdr.tune(frequency, new_srate, bandwidth, gain, get_antenna(), use_agc);
                 sdr.start();
               }
               spdlog::info("Synchronizing subframe after PRB extension");
@@ -755,9 +803,10 @@ auto main(int argc, char **argv) -> int {
             }
           } else {
             // Failed to receive data, or sync lost. Go back to searching state.
+            if (!was_restart) cas_processor.unlock();  // lock preso da rx_buffer() ma process() mai schedulato
             sdr.stop();
             sample_rate = search_sample_rate;  // sample rate for searching
-            sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
+            sdr.tune(frequency, sample_rate, bandwidth, gain, get_antenna(), use_agc);
             sdr.start();
             rrc.reset();
             phy.reset();
@@ -770,7 +819,8 @@ auto main(int argc, char **argv) -> int {
           spdlog::debug("sending tti {} to mbsfn proc {}", tti, mb_idx);
           // Get the samples from the SDR interface, hand them to an MNSFN processor, and start it
           // on a thread from the pool. Getting the buffer pointer from the pool also locks this processor.
-          if (!restart && phy.get_next_frame(mbsfn_processors[mb_idx]->get_rx_buffer_and_lock(), mbsfn_processors[mb_idx]->rx_buffer_size())) {
+          bool was_restart = restart;
+          if (!was_restart && phy.get_next_frame(mbsfn_processors[mb_idx]->get_rx_buffer_and_lock(), mbsfn_processors[mb_idx]->rx_buffer_size())) {
             if (phy.mcch_configured() && phy.is_mbsfn_subframe(tti)) {
               // If data frm SIB1/SIB13 has been received in CAS, configure the processors accordingly
               if (!mbsfn_processors[mb_idx]->mbsfn_configured()) {
@@ -800,10 +850,11 @@ auto main(int argc, char **argv) -> int {
             }
           } else {
             // Failed to receive data, or sync lost. Go back to searching state.
+            if (!was_restart) mbsfn_processors[mb_idx]->unlock();  // lock preso da get_rx_buffer_and_lock() ma process() mai schedulato
             spdlog::warn("Synchronization lost while processing. Going back to searching state.");
             sdr.stop();
             sample_rate = search_sample_rate;  // sample rate for searching
-            sdr.tune(frequency, sample_rate, bandwidth, gain, antenna, use_agc);
+            sdr.tune(frequency, sample_rate, bandwidth, gain, get_antenna(), use_agc);
             sdr.start();
 
             state = searching;
