@@ -655,6 +655,12 @@ auto main(int argc, char **argv) -> int {
             spdlog::info("Nothing found during the scan, restart at frequency {} MHz)", start_frequency / 1000000.0);
             frequency = start_frequency; //return to original frequency - ALC
             sample_rate = search_sample_rate;  // sample rate for searching
+            restart = true;  // Retune at the top of the loop: without this the SDR stays
+                             // tuned to the last step of the sweep while the variables
+                             // already describe the starting frequency.
+            step = 0;        // Reset the sweep so the scan can run again; without this, step stays
+                             // at number_of_step forever and the scan is performed only once
+                             // per process lifetime, leaving the modem stuck on start_frequency.
           } 
           sleep(1);
         }
