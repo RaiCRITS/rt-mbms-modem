@@ -18,6 +18,10 @@
 //
 
 #include "CasFrameProcessor.h"
+
+#include <cmath>
+#include <cstring>
+
 #include "spdlog/spdlog.h"
 
 
@@ -50,7 +54,7 @@ auto CasFrameProcessor::init() -> bool {
   }
 
   srsran_chest_dl_cfg_t* chest_cfg = &_ue_dl_cfg.chest_cfg;
-  bzero(chest_cfg, sizeof(srsran_chest_dl_cfg_t));
+  memset(chest_cfg, 0, sizeof(srsran_chest_dl_cfg_t));
   chest_cfg->filter_coef[0] = 4;
   chest_cfg->filter_coef[1] = 1.0f;
   chest_cfg->filter_type = SRSRAN_CHEST_FILTER_GAUSS;
@@ -63,7 +67,7 @@ auto CasFrameProcessor::init() -> bool {
 
   _ue_dl_cfg.cfg.pdsch.csi_enable         = true;
   _ue_dl_cfg.cfg.pdsch.max_nof_iterations = 8;
-  _ue_dl_cfg.cfg.pdsch.meas_evm_en        = false;
+  _ue_dl_cfg.cfg.pdsch.meas_evm_en        = true;   // else srsran reports evm as NAN
   _ue_dl_cfg.cfg.pdsch.decoder_type       = SRSRAN_MIMO_DECODER_MMSE;
   _ue_dl_cfg.cfg.pdsch.softbuffers.rx[0] = &_softbuffer;
 
@@ -123,7 +127,7 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
   srsran_dci_dl_t dci[SRSRAN_MAX_CARRIERS] = {};    // NOLINT
   int nof_grants = srsran_ue_dl_find_dl_dci(&_ue_dl, &_sf_cfg, &_ue_dl_cfg, _cell.mbms_dedicated ? SRSRAN_SIRNTI_MBMS_DEDICATED : SRSRAN_SIRNTI, dci);
 
-  if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
+  if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) { // Only send visualization data to the REST API every _vis_data_interval subframes
       _rest._ce_values = ce_values();
   }
 
@@ -157,7 +161,7 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
       }
     }
 
-    if (_vis_data_interval > 0 && (_vis_data_counter % _vis_data_interval == 0)) { //ALC: Only send visualization data to the REST API every _vis_data_interval subframes
+    if (_vis_data_interval > 0 && (_vis_data_counter % _vis_data_interval == 0)) { //  Only send visualization data to the REST API every _vis_data_interval subframes
         _rest._pdsch.SetData(pdsch_data());
     }
 
@@ -168,6 +172,9 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
       _rest._pdsch.errors++;
     } else {
       spdlog::debug("Decoded PDSCH");
+      // guard against NAN: it would serialise to invalid JSON on the API
+      _rest._pdsch.evm = std::isfinite(pdsch_res[0].evm) ? pdsch_res[0].evm : 0;
+      _rest._pdsch.avg_iterations = pdsch_res[0].avg_iterations_block;
       for (int i = 0; i < SRSRAN_MAX_CODEWORDS; i++) {
         // .. and pass received PDUs to RLC for further processing
         if (pdsch_cfg->grant.tb[i].enabled && pdsch_res[i].crc) {

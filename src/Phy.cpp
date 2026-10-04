@@ -107,7 +107,7 @@ auto Phy::cell_search() -> bool {
     return false;
   }
 
-  // Log all discovered cells ALC added
+  // Log all discovered cells added
   for (int i = 0; i < ret; ++i) {
     spdlog::info("Discovered cell {}: PCI {}", i, found_cells[i].cell_id);
     if (static_cast<uint32_t>(i) == max_peak_cell) {

@@ -70,14 +70,14 @@ MeasurementFileWriter::MeasurementFileWriter(const libconfig::Config& cfg)
 
 MeasurementFileWriter::~MeasurementFileWriter() {
   _running = false;
-  if (_gps_reader_thread.joinable()) {  // ← controlla SEMPRE prima di join
+  if (_gps_reader_thread.joinable()) {  // ALWAYS check before joining
     _gps_reader_thread.join();
   }
-  //ALC close file 
+  // close file 
   if (_file.is_open()) {
     _file.close();
   }
-  //ALC end 
+  // end 
 
 }
 

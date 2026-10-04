@@ -101,6 +101,11 @@ auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
   _sf_cfg.tti = tti;
   _pmch_cfg.area_id = _area_id;
   srsran_mbsfn_cfg_t mbsfn_cfg = _phy.mbsfn_config_for_tti(tti, mch_idx);
+  if (mch_idx >= _rest._mch.size()) {
+    // PMCH index beyond the maximum (malformed MCCH): drop the subframe
+    _mutex.unlock();
+    return -1;
+  }
   _ue_dl_cfg.chest_cfg.mbsfn_area_id = _area_id;
   srsran_ue_dl_set_mbsfn_area_id(&_ue_dl, mbsfn_cfg.mbsfn_area_id);
 
@@ -178,11 +183,13 @@ auto MbsfnFrameProcessor::process(uint32_t tti) -> int {
       _rest._mcch.SetData(mch_data());
     }
     _rest._mcch.mcs = static_cast<int>(_pmch_cfg.pdsch_cfg.grant.tb[0].mcs_idx);
+    _rest._mcch.avg_iterations = pmch_dec.avg_iterations_block;
   } else {
     if (_vis_data_interval > 0 && (++_vis_data_counter % _vis_data_interval == 0)) {
       _rest._mch[mch_idx].SetData(mch_data());
     }
     _rest._mch[mch_idx].mcs = static_cast<int>(_pmch_cfg.pdsch_cfg.grant.tb[0].mcs_idx);
+    _rest._mch[mch_idx].avg_iterations = pmch_dec.avg_iterations_block;
     _rest._mch[mch_idx].present = true;
   }
 

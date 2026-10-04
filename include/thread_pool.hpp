@@ -49,11 +49,11 @@ public:
 	thread_pool &operator=(thread_pool const &) = delete;
 
 	// Push a new task into the queue
-	template <class Func, class... Args>  // ALC  template che definisce come i task vengono associati a thread  
+	template <class Func, class... Args>
 	auto push(Func &&fn, Args &&...args)
 	{
 		//using return_type = typename std::result_of<Func(Args...)>::type;
-		using return_type = std::invoke_result_t<Func, Args...>; // ALC  modified for C++17 version
+		using return_type = std::invoke_result_t<Func, Args...>; // modified for C++17 version
 
 		auto task{ std::make_shared<std::packaged_task<return_type()>>(
 			std::bind(std::forward<Func>(fn), std::forward<Args>(args)...)

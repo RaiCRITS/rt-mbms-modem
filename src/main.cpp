@@ -51,8 +51,6 @@
 #include "srsran/rlc/rlc.h"
 #include "thread_pool.hpp"
 
- #include "dview.hpp" //ALC add loggher
-
 
 using libconfig::Config;
 using libconfig::FileIOException;
@@ -327,6 +325,33 @@ void write_frequency_to_config(const char* config_file, unsigned freq) {
 }
 
 /**
+ * Writes the ce_enable flag to the configuration file. Used by the RESTful API:
+ * takes effect at the next modem restart, when the MBSFN processors read
+ * modem.phy.ce_enable (unless overridden by the --ce command line flag).
+ *
+ * @param config_file Path to the configuration file
+ * @param enabled Whether channel estimate weighting should be enabled
+ * @return true if the config file was updated
+ */
+auto write_ce_to_config(const char* config_file, bool enabled) -> bool {
+  try {
+    Config cfg;
+    cfg.readFile(config_file);
+    libconfig::Setting& phy = cfg.getRoot()["modem"]["phy"];
+    if (phy.exists("ce_enable")) {
+      phy.remove("ce_enable");  // remove+add: also copes with a pre-existing setting of a different type
+    }
+    phy.add("ce_enable", libconfig::Setting::TypeBoolean) = enabled;
+    cfg.writeFile(config_file);
+    spdlog::info("Written ce_enable = {} to config file {}. Takes effect at next restart.", enabled, config_file);
+    return true;
+  } catch(const std::exception &ex) {
+    spdlog::warn("Error while writing ce_enable to config: {}", ex.what());
+    return false;
+  }
+}
+
+/**
  *  Main entry point for the program.
  *  
  * @param argc  Command line agument count
@@ -424,27 +449,6 @@ auto main(int argc, char **argv) -> int {
         preset.label, frequency / 1e6, frequency_step / 1e6);
   }
 
-  // Only read from config file if scan mode is not being used
-  /*
-  if (!use_scan_mode) {
-    int tmp_step_int = 0;
-    int tmp_nsteps_int = 0;
-    if (cfg.lookupValue("modem.sdr.frequency_step_hz", tmp_step_int)) {
-      if (tmp_step_int > 0) frequency_step = static_cast<unsigned>(tmp_step_int);
-      spdlog::info("Loaded frequency_step_hz from config: {}", frequency_step);
-    } else {
-      spdlog::warn("modem.sdr.frequency_step_hz not found in config. Using default: 1000000 Hz");
-    }
-    if (cfg.lookupValue("modem.sdr.number_of_step", tmp_nsteps_int)) {
-      if (tmp_nsteps_int > 0) number_of_step = static_cast<unsigned>(tmp_nsteps_int);
-      spdlog::info("Loaded number_of_step from config: {}", number_of_step);
-    } else {
-      spdlog::warn("modem.sdr.number_of_step not found in config. Using default: 1");
-    }
-      
-  }*/
-  /* --- ALC: Optional frequency stepping for scanning around the configured frequency. */
-
   cfg.lookupValue("modem.sdr.normalized_gain", gain);
   cfg.lookupValue("modem.sdr.antenna", antenna);
   cfg.lookupValue("modem.sdr.use_agc", use_agc);
@@ -508,7 +512,7 @@ auto main(int argc, char **argv) -> int {
   Phy phy(
       cfg,
       std::bind(&SdrReader::get_samples, &sdr, _1, _2, _3),  // NOLINT
-      arguments.file_bw ? arguments.file_bw * 5 : 25,  //ALC if non reading from file, assume 25 PRB (5MHz @ 15kHz)
+      arguments.file_bw ? arguments.file_bw * 5 : 25,  // if non reading from file, assume 25 PRB (5MHz @ 15kHz)
       arguments.override_nof_prb,
       rx_channels);
 
@@ -533,7 +537,16 @@ auto main(int argc, char **argv) -> int {
   std::string uri = "http://0.0.0.0:3010/modem-api/";
   cfg.lookupValue("modem.restful_api.uri", uri);
   spdlog::info("Starting RESTful API handler at {}", uri);
-  RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params, set_scan_mode);
+  RestHandler rest_handler(cfg, uri, state, sdr, phy, set_params, set_scan_mode,
+      [config_file = arguments.config_file](bool enabled) { return write_ce_to_config(config_file, enabled); });
+
+  // ce_enable value actually in effect (config plus any CLI override), exposed on GET /status
+  bool ce_active = false;
+  cfg.lookupValue("modem.phy.ce_enable", ce_active);
+  if (arguments.ce_enabled != -1) {
+    ce_active = arguments.ce_enabled != 0;
+  }
+  rest_handler._ce_enabled_active = ce_active;
 
   // Initialize one CAS and thread_cnt MBSFN frame processors
   CasFrameProcessor cas_processor(cfg, phy, rlc, rest_handler, rx_channels);
@@ -566,11 +579,11 @@ auto main(int argc, char **argv) -> int {
   state = searching;
 
   // Start the main processing loop
-  start_frequency = frequency;  // Remember the frequency for restart scan -  ALC
-  step = 0;  // number of step for search frequency - ALC
-  unsigned sync_fail_count = 0;   // consecutive MIB sync failures in syncing state - ALC
-  unsigned search_fail_count = 0; // consecutive cell_search() failures in searching state - ALC
-  unsigned max_sync_fails = 5;    // max failures before forcing a frequency scan restart - ALC
+  start_frequency = frequency;  // Remember the frequency for restart scan 
+  step = 0;  // number of step for search frequency 
+  unsigned sync_fail_count = 0;   // consecutive MIB sync failures in syncing state 
+  unsigned search_fail_count = 0; // consecutive cell_search() failures in searching state
+  unsigned max_sync_fails = 5;    // max failures before forcing a frequency scan restart
   cfg.lookupValue("modem.phy.max_sync_fails", max_sync_fails);
   for (;;) {
     if (state == searching) {
@@ -585,12 +598,12 @@ auto main(int argc, char **argv) -> int {
 
       // In searching state, clear the receive buffer and try to find a cell at the configured frequency and synchronize with it
       restart = false;
-      spdlog::info("Clear buffer and start cell search at frequency {} MHz with sample rate {} MHz", frequency / 1e6, sample_rate / 1e6); //ALC addel LOG
+      spdlog::info("Clear buffer and start cell search at frequency {} MHz with sample rate {} MHz", frequency / 1e6, sample_rate / 1e6); // addel LOG
       sdr.clear_buffer();
       // TODO: Re-enable cell_search_adv once wideband scanner buffer allocation is fixed
       bool cell_found = phy.cell_search();  // Fallback to stable cell_search for now
       if (cell_found) {
-        search_fail_count = 0;  // reset on success - ALC
+        search_fail_count = 0;  // reset on success 
         // A cell has been found. We now know the required number of PRB = bandwidth of the carrier. Set the approproiate
         // sample rate...
         spdlog::info("Cell found at frequency {} MHz", frequency / 1e6);
@@ -625,7 +638,7 @@ auto main(int argc, char **argv) -> int {
         // ... and move to syncing state.
         state = syncing;
       } else {
-        // cell_search() failed — check for persistent overflow/MIB failure and force SDR hard reset - ALC
+        // cell_search() failed — check for persistent overflow/MIB failure and force SDR hard reset 
         search_fail_count++;
         if (search_fail_count >= max_sync_fails) {
           spdlog::warn("cell_search failed {} times in a row — forcing SDR hard reset to recover from buffer overflow.", search_fail_count);
@@ -636,7 +649,7 @@ auto main(int argc, char **argv) -> int {
           sdr.start();
           std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
-        //frequency-step search loop added — try `number_of_step` frequencies spaced by `frequency_step` - ALC
+        //frequency-step search loop added — try `number_of_step` frequencies spaced by `frequency_step`
         if (step < number_of_step) {
           step++;
           frequency = start_frequency + step * frequency_step;
@@ -653,7 +666,7 @@ auto main(int argc, char **argv) -> int {
         } else {
           if (step == number_of_step && number_of_step > 0) {  //if the frequency scan is active (number_of_step > 0) but max number of step is reached
             spdlog::info("Nothing found during the scan, restart at frequency {} MHz)", start_frequency / 1000000.0);
-            frequency = start_frequency; //return to original frequency - ALC
+            frequency = start_frequency; //return to original frequency
             sample_rate = search_sample_rate;  // sample rate for searching
             restart = true;  // Retune at the top of the loop: without this the SDR stays
                              // tuned to the last step of the sweep while the variables
@@ -695,7 +708,7 @@ auto main(int argc, char **argv) -> int {
 
       if (sfn_sync) {
         // We're locked on to the cell, and have succesfully received the MIB at the target sample rate.
-        sync_fail_count = 0;  // reset failure counter on successful sync - ALC
+        sync_fail_count = 0;  // reset failure counter on successful sync 
         spdlog::info("Decoded MIB at target sample rate, TTI is {}. Subframe synchronized.", phy.tti());
 
         // Set the cell parameters in the CAS processor
@@ -721,13 +734,12 @@ auto main(int argc, char **argv) -> int {
       int mb_idx = 0;
       while (state == processing) {
         tti = (tti + 1) % 10240; // Clamp the TTI
-//        dvw::log_i("tti", tti); //ALC log the TTI for debugging purposes
         if (phy.is_cas_subframe(tti)) {
           // Get the samples from the SDR interface, hand them to a CAS processor, and start it
           // on a thread from the pool.
           if (!restart && phy.get_next_frame(cas_processor.rx_buffer(), cas_processor.rx_buffer_size())) {
             spdlog::debug("sending tti {} to regular processor", tti); 
-            pool.push([ObjectPtr = &cas_processor, tti, &rest_handler] {  // ALC è una lambda che cattura un puntatore alla cas_processor e lo invia a un thread 
+            pool.push([ObjectPtr = &cas_processor, tti, &rest_handler] {
                 if (ObjectPtr->process(tti)) {
                 // Set constellation diagram data and rx params for CAS in the REST API handler
                 rest_handler.add_cinr_value(ObjectPtr->cinr_db());
@@ -793,7 +805,7 @@ auto main(int argc, char **argv) -> int {
                 mbsfn_processors[mb_idx]->set_cell(cell);
                 mbsfn_processors[mb_idx]->configure_mbsfn(phy.mbsfn_area_id(), scs);
               }
-              pool.push([ObjectPtr = mbsfn_processors[mb_idx], tti] {  // ALC assegna gli MBSFN  al thread pool  
+              pool.push([ObjectPtr = mbsfn_processors[mb_idx], tti] {
                 ObjectPtr->process(tti);
               });
             } else {

@@ -29,7 +29,7 @@
 #include "spdlog/spdlog.h"
 
 SdrReader:: ~SdrReader() {
-  // ALC: Ensure reader thread is stopped and joined before tearing down streams
+  // Ensure reader thread is stopped and joined before tearing down streams
   // This prevents segfaults from UHD/Soapy when closing while readStream() may be executing
   if (_running) {
     try {
@@ -245,7 +245,7 @@ void SdrReader::start() {
   thread_param.sched_priority = 50;
   _cfg.lookupValue("modem.sdr.reader_thread_priority_rt", thread_param.sched_priority);
 
-  spdlog::info("Launching sample reader thread with realtime scheduling priority {}", thread_param.sched_priority);  //ALC changed debug to info
+  spdlog::debug("Launching sample reader thread with realtime scheduling priority {}", thread_param.sched_priority);  
 
   int error = pthread_setschedparam(_readerThread.native_handle(), SCHED_RR, &thread_param);
   if (error != 0) {
@@ -259,13 +259,13 @@ void SdrReader::stop() {
   // Signal thread to stop
   _running = false;
 
-  // ALC: Join reader thread first to ensure it's not inside readStream when stream is closed
+  //Join reader thread first to ensure it's not inside readStream when stream is closed
   // This prevents race conditions that cause segfaults in UHD/Soapy
   if (_readerThread.joinable()) {
     _readerThread.join();
   }
 
-  // ALC: Now it's safe to deactivate and close the stream
+  // Now it's safe to deactivate and close the stream
   if (_sdr != nullptr && _stream != nullptr) {
     auto sdr = (SoapySDR::Device*)_sdr;
     try {
@@ -285,7 +285,7 @@ void SdrReader::read() {
     int toRead = ceil(_sampleRate / 1000.0);
     //int toRead = 254;
     if (_buffer->free_size() < toRead * sizeof(cf_t)) {
-      spdlog::debug("ringbuffer overflow");  //ALC change debug to info
+      spdlog::debug("ringbuffer overflow"); 
       std::this_thread::sleep_for(std::chrono::microseconds(1000));
     } else {
       int read = 0;

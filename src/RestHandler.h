@@ -20,6 +20,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <array>
 #include <map>
 #include <memory>
 #include <atomic>
@@ -56,6 +57,13 @@ class RestHandler {
     typedef std::function<bool(const std::string& mode)> set_scan_mode_t;
 
     /**
+     *  Definition of the callback for persisting the ce_enable flag (channel estimate
+     *  weighting in MBSFN soft demodulation) to the config file. Takes effect at the
+     *  next modem restart. Returns false if the config file could not be written.
+     */
+    typedef std::function<bool(bool enabled)> set_ce_enable_t;
+
+    /**
      *  Default constructor.
      *
      *  @param cfg Config singleton reference
@@ -66,7 +74,8 @@ class RestHandler {
      *  @param set_scan_mode Set scan mode preset callback
      */
     RestHandler(const libconfig::Config& cfg, const std::string& url, state_t& state,
-        SdrReader& sdr, Phy& phy, set_params_t set_params, set_scan_mode_t set_scan_mode);
+        SdrReader& sdr, Phy& phy, set_params_t set_params, set_scan_mode_t set_scan_mode,
+        set_ce_enable_t set_ce_enable);
     /**
      *  Default destructor.
      */
@@ -87,7 +96,9 @@ class RestHandler {
         };
         bool present = false;
         int mcs = 0;
-        double ber;
+        double ber = 0;      // no longer measured since the srsLTE -> srsRAN rebase, kept for API compatibility
+        float evm = 0;       // PDSCH only: PMCH does not measure EVM
+        float avg_iterations = 0;
         unsigned total = 1;
         unsigned errors = 0;
       private:
@@ -111,9 +122,11 @@ class RestHandler {
     ChannelInfo _mcch;
 
     /**
-     *  RX info for MCHs
+     *  RX info for MCHs. Fixed size (at most 15 PMCHs per MBSFN area, TS 36.331):
+     *  no dynamic insertions, so the worker and REST threads cannot corrupt the
+     *  container structure by accessing it concurrently.
      */
-    std::map<uint32_t, ChannelInfo> _mch;
+    std::array<ChannelInfo, 16> _mch;
 
     /**
      *  Current CINR value
@@ -131,13 +144,20 @@ class RestHandler {
      */
     std::atomic<uint32_t> cas_frame_time_us{0};
 
+    /**
+     *  ce_enable value currently active in the MBSFN processors (config + CLI override),
+     *  set once at startup and exposed on GET /status. A differing value written via
+     *  PUT /ce_enable becomes active only after a restart.
+     */
+    bool _ce_enabled_active = false;
+
   private:
     std::vector<float>  _cinr_db;
     void get(web::http::http_request message);
     void put(web::http::http_request message);
     void options(const web::http::http_request& message);
 
-    web::json::value get_system_status();
+    auto get_system_status() -> web::json::value;
     uint64_t _prev_cpu_total = 0;
     uint64_t _prev_cpu_idle = 0;
 
@@ -156,6 +176,7 @@ class RestHandler {
 
     set_params_t _set_params;
     set_scan_mode_t _set_scan_mode;
+    set_ce_enable_t _set_ce_enable;
 
     bool _require_bearer_token = false;
     std::string _api_key;

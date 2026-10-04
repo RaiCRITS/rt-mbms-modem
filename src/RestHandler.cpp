@@ -26,6 +26,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
+#include <cmath>
 
 #include "spdlog/spdlog.h"
 
@@ -39,12 +40,14 @@ using web::http::experimental::listener::http_listener_config;
 
 RestHandler::RestHandler(const libconfig::Config& cfg, const std::string& url,
                          state_t& state, SdrReader& sdr, Phy& phy,
-                         set_params_t set_params, set_scan_mode_t set_scan_mode)
+                         set_params_t set_params, set_scan_mode_t set_scan_mode,
+                         set_ce_enable_t set_ce_enable)
     : _state(state)
     , _sdr(sdr)
     , _phy(phy)
     , _set_params(std::move(set_params))
     , _set_scan_mode(std::move(set_scan_mode))
+    , _set_ce_enable(std::move(set_ce_enable))
 {
 
   http_listener_config server_config;
@@ -110,6 +113,24 @@ void RestHandler::options(const http_request& message) {
   message.reply(response);
 }
 
+// Extracts the MCH index from /mch_status/<idx> or /mch_data/<idx>.
+// Returns -1 if the index is missing, not numeric, or negative.
+static auto mch_index(const std::vector<utility::string_t>& paths) -> int {
+  if (paths.size() < 2) {
+    return -1;
+  }
+  try {
+    size_t pos = 0;
+    int idx = std::stoi(paths[1], &pos);
+    if (pos != paths[1].size() || idx < 0) {
+      return -1;
+    }
+    return idx;
+  } catch (const std::exception&) {
+    return -1;
+  }
+}
+
 void RestHandler::get(http_request message) {
   spdlog::debug("Received GET request {}", message.to_string() );
   auto paths = uri::split_path(uri::decode(message.relative_uri().path()));
@@ -148,6 +169,7 @@ void RestHandler::get(http_request message) {
       state["subcarrier_spacing"] = value(_phy.mbsfn_subcarrier_spacing_khz());
       state["mbsfn_frame_time_us"] = value(mbsfn_frame_time_us.load());
       state["cas_frame_time_us"] = value(cas_frame_time_us.load());
+      state["ce_enable"] = value(_ce_enabled_active);
       reply_cors(message, status_codes::OK, state);
     } else if (paths[0] == "sdr_params") {
       value sdr = value::object();
@@ -171,6 +193,8 @@ void RestHandler::get(http_request message) {
       sdr["bler"] = value(static_cast<float>(_pdsch.errors) /
                                 static_cast<float>(_pdsch.total));
       sdr["ber"] = value(_pdsch.ber);
+      sdr["evm"] = value(_pdsch.evm);
+      sdr["avg_iterations"] = value(_pdsch.avg_iterations);
       sdr["mcs"] = value(_pdsch.mcs);
       sdr["present"] = 1;
       reply_cors(message, status_codes::OK, sdr);
@@ -182,6 +206,7 @@ void RestHandler::get(http_request message) {
       sdr["bler"] = value(static_cast<float>(_mcch.errors) /
                                 static_cast<float>(_mcch.total));
       sdr["ber"] = value(_mcch.ber);
+      sdr["avg_iterations"] = value(_mcch.avg_iterations);
       sdr["mcs"] = value(_mcch.mcs);
       sdr["present"] = 1;
       reply_cors(message, status_codes::OK, sdr);
@@ -207,18 +232,35 @@ void RestHandler::get(http_request message) {
       });
       reply_cors(message, status_codes::OK, value::array(mi));
     } else if (paths[0] == "mch_status") {
-      int idx = std::stoi(paths[1]);
-      value sdr = value::object();
-      sdr["bler"] = value(static_cast<float>(_mch[idx].errors) /
-                                static_cast<float>(_mch[idx].total));
-      sdr["ber"] = value(_mch[idx].ber);
-      sdr["mcs"] = value(_mch[idx].mcs);
-      sdr["present"] = value(_mch[idx].present);
-      reply_cors(message, status_codes::OK, sdr);
+      int idx = mch_index(paths);
+      if (idx < 0) {
+        reply_cors(message, status_codes::BadRequest);
+      } else {
+        // Well-formed index but beyond the maximum: reply with the same default
+        // (present=false) the old std::map produced, to keep existing clients working.
+        ChannelInfo fallback;
+        ChannelInfo& ci = static_cast<size_t>(idx) < _mch.size() ? _mch[idx] : fallback;
+        value sdr = value::object();
+        sdr["bler"] = value(static_cast<float>(ci.errors) /
+                                  static_cast<float>(ci.total));
+        sdr["ber"] = value(ci.ber);
+        sdr["avg_iterations"] = value(ci.avg_iterations);
+        sdr["mcs"] = value(ci.mcs);
+        sdr["present"] = value(ci.present);
+        reply_cors(message, status_codes::OK, sdr);
+      }
     } else if (paths[0] == "mch_data") {
-      int idx = std::stoi(paths[1]);
-      auto cestream = Concurrency::streams::bytestream::open_istream(_mch[idx].GetData());
-      reply_cors(message, status_codes::OK, cestream);
+      int idx = mch_index(paths);
+      if (idx < 0) {
+        reply_cors(message, status_codes::BadRequest);
+      } else {
+        std::vector<uint8_t> data;
+        if (static_cast<size_t>(idx) < _mch.size()) {
+          data = _mch[idx].GetData();
+        }
+        auto cestream = Concurrency::streams::bytestream::open_istream(std::move(data));
+        reply_cors(message, status_codes::OK, cestream);
+      }
     } else if (paths[0] == "sib_info") {
       value sib = value::object();
       sib["mcch_configured"] = value(_phy.mcch_configured());
@@ -313,6 +355,26 @@ void RestHandler::put(http_request message) {
           reply_cors(message, status_codes::OK);
         }
       });
+    } else if (paths[0] == "ce_enable") {
+      message.extract_json().then([this, message](const value& jval) {
+        spdlog::debug("Received JSON: {}", jval.serialize());
+        try {
+          if (!jval.has_field("enabled")) {
+            reply_cors(message, status_codes::BadRequest);
+            return;
+          }
+          const value& v = jval.at("enabled");
+          bool enabled = v.is_boolean() ? v.as_bool() : (v.as_integer() != 0);
+          if (_set_ce_enable(enabled)) {
+            reply_cors(message, status_codes::OK);
+          } else {
+            reply_cors(message, status_codes::InternalError);
+          }
+        } catch (const std::exception& ex) {
+          spdlog::warn("Malformed ce_enable request: {}", ex.what());
+          reply_cors(message, status_codes::BadRequest);
+        }
+      });
     } else if (paths[0] == "restart") {
       reply_cors(message, status_codes::OK);
       spdlog::warn("Restart requested via REST API. Exiting, relying on systemd Restart=always to relaunch.");
@@ -328,7 +390,7 @@ void RestHandler::put(http_request message) {
   }
 }
 
-value RestHandler::get_system_status() {
+auto RestHandler::get_system_status() -> value {
   value status = value::object();
 
   // CPU temp: LattePanda / most x86 boards expose it as thermal_zone0, millidegrees C.
