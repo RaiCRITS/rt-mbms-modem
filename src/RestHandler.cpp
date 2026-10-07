@@ -19,6 +19,7 @@
 
 #include "RestHandler.h"
 
+#include <deque>
 #include <memory>
 #include <utility>
 #include <thread>
@@ -166,6 +167,7 @@ void RestHandler::get(http_request message) {
       state["cell_id"] = value(_phy.cell().id);
       state["cfo"] = value(_phy.cfo());
       state["cinr_db"] = value(cinr_db());
+      state["cinr_db_avg"] = value(cinr_db_avg());
       state["subcarrier_spacing"] = value(_phy.mbsfn_subcarrier_spacing_khz());
       state["mbsfn_frame_time_us"] = value(mbsfn_frame_time_us.load());
       state["cas_frame_time_us"] = value(cas_frame_time_us.load());
@@ -193,7 +195,7 @@ void RestHandler::get(http_request message) {
       sdr["bler"] = value(static_cast<float>(_pdsch.errors) /
                                 static_cast<float>(_pdsch.total));
       sdr["ber"] = value(_pdsch.ber);
-      sdr["evm"] = value(_pdsch.evm);
+      sdr["evm_rms"] = value(_pdsch.evm_rms);
       sdr["avg_iterations"] = value(_pdsch.avg_iterations);
       sdr["mcs"] = value(_pdsch.mcs);
       sdr["present"] = 1;
@@ -291,13 +293,24 @@ void RestHandler::get(http_request message) {
 
       reply_cors(message, status_codes::OK, sib);
     } else if (paths[0] == "log") {
-      std::string logfile = "/var/log/syslog";
-
-      Concurrency::streams::file_stream<uint8_t>::open_istream(logfile).then(
-          [message](const Concurrency::streams::basic_istream<unsigned char>&
-                        file_stream) {
-            reply_cors(message, status_codes::OK, file_stream, "text/plain");
-          });
+      // still scans the whole syslog each call, fine at a few MB; read from the tail if it gets slow
+      std::ifstream f("/var/log/syslog");
+      if (!f) {
+        reply_cors(message, status_codes::NotFound);
+        return;
+      }
+      std::deque<std::string> lines;
+      for (std::string l; std::getline(f, l);) {
+        if (l.find(" modem[") == std::string::npos) continue;
+        lines.push_back(std::move(l));
+        if (lines.size() > 500) lines.pop_front();
+      }
+      std::string out;
+      for (auto& l : lines) out += l + '\n';
+      web::http::http_response response(status_codes::OK);
+      response.headers().add(U("Access-Control-Allow-Origin"), U("*"));
+      response.set_body(out, "text/plain");
+      message.reply(response);
     }
   }
 }

@@ -37,7 +37,7 @@
 #include "cpprest/containerstream.h"
 #include "cpprest/producerconsumerstream.h"
 
-const int CINR_RAVG_CNT = 100;
+const int CINR_RAVG_CNT = 20;
 typedef enum { searching, syncing, processing } state_t;
 
 /**
@@ -97,7 +97,7 @@ class RestHandler {
         bool present = false;
         int mcs = 0;
         double ber = 0;      // no longer measured since the srsLTE -> srsRAN rebase, kept for API compatibility
-        float evm = 0;       // PDSCH only: PMCH does not measure EVM
+        float evm_rms = 0;   // PDSCH only: PMCH does not measure EVM
         float avg_iterations = 0;
         unsigned total = 1;
         unsigned errors = 0;
@@ -129,9 +129,15 @@ class RestHandler {
     std::array<ChannelInfo, 16> _mch;
 
     /**
-     *  Current CINR value
+     *  Current instantaneous CINR value
      */
-    float cinr_db() { return _cinr_db.size() ? (std::accumulate(_cinr_db.begin(), _cinr_db.end(), 0) / (_cinr_db.size() * 1.0)) : 0.0; };
+    float cinr_db() { return _cinr_db.size() ? _cinr_db.back() : 0.0f; };
+
+    /**
+     *  Current average CINR value, over the last CINR_RAVG_CNT samples
+     */
+    float cinr_db_avg() { return _cinr_db.size() ? (std::accumulate(_cinr_db.begin(), _cinr_db.end(), 0.0f) / (_cinr_db.size() * 1.0f)) : 0.0f; };
+
     void add_cinr_value( float cinr);
 
     /**

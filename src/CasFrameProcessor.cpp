@@ -173,7 +173,7 @@ auto CasFrameProcessor::process(uint32_t tti) -> bool {
     } else {
       spdlog::debug("Decoded PDSCH");
       // guard against NAN: it would serialise to invalid JSON on the API
-      _rest._pdsch.evm = std::isfinite(pdsch_res[0].evm) ? pdsch_res[0].evm : 0;
+      _rest._pdsch.evm_rms = std::isfinite(pdsch_res[0].evm) ? pdsch_res[0].evm : 0;
       _rest._pdsch.avg_iterations = pdsch_res[0].avg_iterations_block;
       for (int i = 0; i < SRSRAN_MAX_CODEWORDS; i++) {
         // .. and pass received PDUs to RLC for further processing

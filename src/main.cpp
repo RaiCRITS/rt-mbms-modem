@@ -835,8 +835,8 @@ auto main(int argc, char **argv) -> int {
           // Collect the relevant info and write it out.
           std::vector<std::string> cols;
 
-          spdlog::info("CINR {:.2f} dB", rest_handler.cinr_db() );
-          cols.push_back(std::to_string(rest_handler.cinr_db()));
+          spdlog::info("CINR {:.2f} dB", rest_handler.cinr_db_avg() );
+          cols.push_back(std::to_string(rest_handler.cinr_db_avg()));
 
           spdlog::info("PDSCH: MCS {}, BLER {}, BER {}",
               rest_handler._pdsch.mcs,
