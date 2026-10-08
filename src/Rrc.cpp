@@ -126,7 +126,7 @@ void Rrc::handle_sib1(const sib_type1_mbms_r14_s& sib1) {
   for (auto& i : sib1.sched_info_list_mbms_r14) {
     sched_info_mbms_r14_s::si_periodicity_r14_e_ p = i.si_periodicity_r14;
     for (auto t : i.sib_map_info_r14) {
-      spdlog::info("SIB scheduling info, sib_type={}, si_periodicity={}",
+      spdlog::debug("SIB scheduling info, sib_type={}, si_periodicity={}",
                    t.to_number(), p.to_number());
     }
   }
